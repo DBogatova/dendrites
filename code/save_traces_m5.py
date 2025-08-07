@@ -47,7 +47,7 @@ PREVIEW_FOLDER = BASE / "trace_previews_curated"
 PREVIEW_FOLDER.mkdir(exist_ok=True)
 
 # === PLOTTING OPTIONS ===
-PLOT_ALL_TRACES = False
+PLOT_ALL_TRACES = True
 SELECTED_NAMES = [
     "dend_006", "dend_014", "dend_019", "dend_035",
     "dend_023", "dend_025", "dend_027"
