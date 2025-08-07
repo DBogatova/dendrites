@@ -28,8 +28,8 @@ mpl.rcParams['font.family'] = 'CMU Serif'
 mpl.rcParams['axes.unicode_minus'] = False  # Use standard minus sign instead of Unicode
 
 # === CONFIGURATION ===
-DATE = "2025-03-26"
-MOUSE = "organoid"
+DATE = "2025-04-22"
+MOUSE = "rAi162_15"
 RUN = "run6"
 Y_CROP = 3
 FRAME_RATE = 5  # Frames per second
@@ -53,41 +53,14 @@ SELECTED_NAMES = [
     "dend_023", "dend_025", "dend_027"
 ]
 
-def interpolate_motion_artifacts(trace, start_frame=418, end_frame=440):
-    """
-    Replace a section of the trace with a straight line interpolation.
-    
-    Args:
-        trace: The trace to modify
-        start_frame: Starting frame of the section to replace
-        end_frame: Ending frame of the section to replace
-        
-    Returns:
-        Modified trace with the section replaced by a straight line
-    """
-    modified_trace = trace.copy()
-    
-    if len(modified_trace) > start_frame and len(modified_trace) > end_frame + 1:
-        end_frame = min(end_frame, len(modified_trace) - 1)
-        
-        # Get values at the endpoints
-        start_val = modified_trace[start_frame - 1]
-        end_val = modified_trace[end_frame + 1]
-        
-        # Create a straight line between these points
-        line_length = end_frame - start_frame + 3  # +3 to include both endpoints
-        line_values = np.linspace(start_val, end_val, line_length)
-        
-        # Replace the values with the straight line
-        modified_trace[start_frame-1:end_frame+2] = line_values
-        
-    return modified_trace
+
 
 def main():
     # === LOAD RAW STACK AND CALCULATE ΔF/F ===
     print("Loading and computing ΔF/F stack...")
     raw_stack = tifffile.imread(RAW_STACK_PATH).astype(np.float32)
-    raw_stack = raw_stack[:, :, :-Y_CROP, :]
+    if Y_CROP > 0:
+        raw_stack = raw_stack[:, :, :-Y_CROP, :]
     T = raw_stack.shape[0]
 
     # Calculate F0 as the mean of the lowest 20% of values
@@ -109,6 +82,18 @@ def main():
     for path in mask_paths:
         name = path.stem.replace("_labelmap", "")
         mask = tifffile.imread(path).astype(bool)
+        
+        # Ensure mask dimensions match raw stack
+        if mask.shape != dff_stack.shape[1:]:
+            print(f"Adjusting mask {name} from {mask.shape} to {dff_stack.shape[1:]}")
+            # If mask is smaller in Y, pad it; if larger, crop it
+            if mask.shape[1] < dff_stack.shape[2]:
+                pad_y = dff_stack.shape[2] - mask.shape[1]
+                mask = np.pad(mask, ((0,0), (0,pad_y), (0,0)), mode='constant')
+            elif mask.shape[1] > dff_stack.shape[2]:
+                crop_y = mask.shape[1] - dff_stack.shape[2]
+                mask = mask[:, :-crop_y, :]
+        
         if not np.any(mask):
             continue
 
@@ -168,14 +153,7 @@ def main():
 
         # Right: Trace
         t = np.arange(T) / FRAME_RATE
-        
-        # Create a modified trace with a straight line between frames 417 and 441
-        modified_trace = interpolate_motion_artifacts(smoothed, 
-                                                    start_frame=418, 
-                                                    end_frame=440)
-        
-        # Plot with the modified data
-        ax_trace.plot(t, modified_trace, color='teal', lw=1.5)
+        ax_trace.plot(t, smoothed, color='teal', lw=1.5)
         ax_trace.set_title("ΔF/F Trace (%)")
         ax_trace.set_xlabel("Time (s)")
         ax_trace.set_ylabel("ΔF/F (%)")
@@ -206,13 +184,8 @@ def main():
             
         t = np.arange(T) / FRAME_RATE
         
-        # Create a modified trace with a straight line between frames 417 and 441
-        modified_trace = interpolate_motion_artifacts(trace, 
-                                                    start_frame=418, 
-                                                    end_frame=440)
-        
         # Plot trace with vertical offset
-        ax.plot(t, modified_trace + count * offset, 
+        ax.plot(t, trace + count * offset, 
                color=cm.turbo(i / len(traces)), lw=1)
         
         # Add label

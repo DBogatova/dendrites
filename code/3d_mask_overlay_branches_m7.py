@@ -4,8 +4,8 @@ from pathlib import Path
 from tqdm import tqdm
 
 # === CONFIGURATION ===
-DATE = "2025-03-26"
-MOUSE = "organoid"
+DATE = "2025-04-22"
+MOUSE = "rAi162_15"
 RUN = "run6"
 Y_CROP = 3
 

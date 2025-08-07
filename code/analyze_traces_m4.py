@@ -14,8 +14,8 @@ import pandas as pd
 from pathlib import Path
 
 # === CONFIGURATION ===
-DATE = "2025-03-26"
-MOUSE = "organoid"
+DATE = "2025-04-22"
+MOUSE = "rAi162_15"
 RUN = "run6"
 
 # === PATHS ===

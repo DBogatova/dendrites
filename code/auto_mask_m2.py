@@ -22,8 +22,8 @@ import cv2
 import gc
 
 # === CONFIGURATION ===
-DATE = "2025-03-26"
-MOUSE = "organoid"
+DATE = "2025-04-22"
+MOUSE = "rAi162_15"
 RUN = "run6"
 
 # === PATHS ===
@@ -37,9 +37,9 @@ PREVIEW_FOLDER.mkdir(parents=True, exist_ok=True)
 # === PARAMETERS ===
 VOXEL_SIZE = (4.7, 0.5, 0.6)  # (Z, Y, X) in microns
 VOXEL_VOL = np.prod(VOXEL_SIZE)
-MIN_VOL = 600       # Minimum dendrite volume in µm³
-MAX_VOL = 15000     # Maximum dendrite volume in µm³
-Y_CROP = 0          # Number of pixels to crop from bottom of Y dimension
+MIN_VOL = 5000       # Minimum dendrite volume in µm³
+MAX_VOL = 150000     # Maximum dendrite volume in µm³
+Y_CROP = 3          # Number of pixels to crop from bottom of Y dimension
 INTENSITY_PERCENTILE = 99.9  # Percentile for thresholding
 MAX_DENDRITES_TOTAL = 200    # Maximum number of dendrites to extract
 DUPLICATE_THRESHOLD = 0.9    # Dice coefficient threshold for duplicate detection

@@ -7,8 +7,8 @@ import imageio
 import time
 
 # === CONFIGURATION ===
-DATE = "2025-03-26"
-MOUSE = "organoid"
+DATE = "2025-04-22"
+MOUSE = "rAi162_15"
 RUN = "run6"
 Y_CROP = 3
 VOXEL_SCALE = (4.7, 0.5, 0.6)  # (Z, Y, X) in microns
@@ -30,7 +30,8 @@ OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
 # === LOAD RAW DATA ===
 print(f"Loading raw stack from: {RAW_STACK_PATH}")
 raw_stack = tifffile.imread(RAW_STACK_PATH).astype(np.float32)
-raw_stack = raw_stack[:, :, :-Y_CROP, :]
+if Y_CROP > 0:
+    raw_stack = raw_stack[:, :, :-Y_CROP, :]
 T, Z, Y, X = raw_stack.shape
 
 # === CALCULATE F0 AND ΔF/F ===
@@ -56,6 +57,18 @@ for path in tqdm(mask_paths, desc="Overlaying cells"):
         continue
         
     mask = tifffile.imread(path).astype(bool)
+    
+    # Ensure mask dimensions match raw stack
+    if mask.shape != (Z, Y, X):
+        print(f"Adjusting mask {path.name} from {mask.shape} to {(Z, Y, X)}")
+        # If mask is smaller in Y, pad it; if larger, crop it
+        if mask.shape[1] < Y:
+            pad_y = Y - mask.shape[1]
+            mask = np.pad(mask, ((0,0), (0,pad_y), (0,0)), mode='constant')
+        elif mask.shape[1] > Y:
+            crop_y = mask.shape[1] - Y
+            mask = mask[:, :-crop_y, :]
+    
     if not np.any(mask):
         print(f"  Warning: Empty mask in {path.name}")
         continue

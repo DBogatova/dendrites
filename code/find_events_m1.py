@@ -24,11 +24,11 @@ import gc
 mpl.rcParams['font.family'] = 'CMU Serif'
 
 # === CONFIGURATION ===
-DATE = "2025-03-26"
-MOUSE = "organoid"
+DATE = "2025-04-22"
+MOUSE = "rAi162_15"
 RUN = "run6"
 CROP_RADIUS = 5  # Number of frames to include before/after each event
-ACTIVITY_THRESHOLD = 0.2  # Threshold for detecting active frames
+ACTIVITY_THRESHOLD = 0.37  # Threshold for detecting active frames
 MAX_FRAME_GAP = 1  # Maximum gap between frames to group into same event
 Y_CROP = 3          # Number of pixels to crop from bottom of Y dimension
 

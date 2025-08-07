@@ -27,8 +27,8 @@ from skimage.measure import label, regionprops
 from scipy.spatial.distance import cdist
 
 # === CONFIGURATION ===
-DATE = "2025-03-26"
-MOUSE = "organoid"
+DATE = "2025-04-22"
+MOUSE = "rAi162_15"
 RUN = "run6"
 
 # === PATHS ===
