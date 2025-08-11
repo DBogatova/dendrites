@@ -7,13 +7,14 @@ import imageio
 import time
 
 # === CONFIGURATION ===
-DATE = "2025-03-26"
+DATE = "2025-08-06"
 MOUSE = "organoid"
-RUN = "run6"
+RUN = "run4"
 Y_CROP = 3
 VOXEL_SCALE = (4.7, 0.5, 0.6)  # (Z, Y, X) in microns
 
-# Specify which cells to include
+# Cell selection options
+USE_ALL_CELLS = True  # Set to False to use only SELECTED_CELLS
 SELECTED_CELLS = [
     "dend_006", "dend_014", "dend_019", "dend_035",
     "dend_023", "dend_025", "dend_027"
@@ -22,9 +23,9 @@ SELECTED_CELLS = [
 # === PATHS ===
 BASE = Path("/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025/data") / DATE / MOUSE / RUN
 MASK_FOLDER = BASE / "labelmaps_curated_dynamic"
-RAW_STACK_PATH = BASE / "raw" / f"runA_{RUN}_{MOUSE}_reslice_bin.tif"
-OUTPUT_PATH =  BASE / "overlays" / "selected_cells_dff.tif"
-VIDEO_PATH = BASE / "overlays" / "selected_cells_rotation.mp4"
+RAW_STACK_PATH = BASE / "raw" / f"runB_{RUN}_reslice.tif"
+OUTPUT_PATH = BASE / "overlays" / ("all_cells_dff.tif" if USE_ALL_CELLS else "selected_cells_dff.tif")
+VIDEO_PATH = BASE / "overlays" / ("all_cells_rotation.mp4" if USE_ALL_CELLS else "selected_cells_rotation.mp4")
 OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 # === LOAD RAW DATA ===
@@ -46,9 +47,13 @@ del raw_stack, sorted_stack, lowest_20pct  # free memory
 # === PREPARE OUTPUT OVERLAY ===
 overlay_stack = np.zeros_like(dff_stack, dtype=np.float32)
 
-# === LOAD SELECTED MASKS AND OVERLAY ===
-print(f"Processing {len(SELECTED_CELLS)} selected cells")
-mask_paths = [MASK_FOLDER / f"{cell_name}_labelmap.tif" for cell_name in SELECTED_CELLS]
+# === LOAD MASKS AND OVERLAY ===
+if USE_ALL_CELLS:
+    mask_paths = sorted(MASK_FOLDER.glob("dend_*_labelmap.tif"))
+    print(f"Processing all {len(mask_paths)} cells")
+else:
+    mask_paths = [MASK_FOLDER / f"{cell_name}_labelmap.tif" for cell_name in SELECTED_CELLS]
+    print(f"Processing {len(SELECTED_CELLS)} selected cells")
 
 for path in tqdm(mask_paths, desc="Overlaying cells"):
     if not path.exists():
@@ -75,7 +80,7 @@ viewer = napari.Viewer(ndisplay=3)
 # Add the image layer
 image_layer = viewer.add_image(
     overlay_stack,
-    name="Selected Cells ΔF/F",
+    name="All Cells ΔF/F" if USE_ALL_CELLS else "Selected Cells ΔF/F",
     scale=(1, *VOXEL_SCALE),  # (T, Z, Y, X)
     colormap="turbo",
     rendering="attenuated_mip",

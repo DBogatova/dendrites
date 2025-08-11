@@ -10,8 +10,8 @@ RUN = "run4"
 Y_CROP = 3
 
 BASE = Path("/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025/data") / DATE / MOUSE / RUN
-RAW_STACK_PATH = BASE / "raw" / f"runA_{RUN}_{MOUSE}_reslice_bin.tif"
-F0_PATH = BASE / "raw" / f"runA_{RUN}_{MOUSE}_F0_stack.tif"
+RAW_STACK_PATH = BASE / "raw" / f"runB_{RUN}_reslice.tif"
+F0_PATH = BASE / "raw" / f"runB_{RUN}_F0_stack.tif"
 LABELMAP_FOLDER = BASE / "labelmaps_curated_dynamic"
 OUTPUT_PATH = BASE / "overlays" / "multi_dendrites_dff_branches.tif"
 OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
