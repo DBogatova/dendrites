@@ -18,24 +18,32 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 from scipy.ndimage import gaussian_filter
+from scipy.ndimage import uniform_filter1d
+from scipy.signal import find_peaks
 import gc
 
 # Set matplotlib font
 mpl.rcParams['font.family'] = 'CMU Serif'
 
 # === CONFIGURATION ===
-DATE = "2025-03-26"
+DATE = "2025-08-06"
 MOUSE = "organoid"
-RUN = "run6"
+RUN = "run4"
 CROP_RADIUS = 5  # Number of frames to include before/after each event
-ACTIVITY_THRESHOLD = 0.2  # Threshold for detecting active frames
-MAX_FRAME_GAP = 1  # Maximum gap between frames to group into same event
-Y_CROP = 3          # Number of pixels to crop from bottom of Y dimension
+START_THRESHOLD = 3.0  # Z-score threshold for event start
+END_THRESHOLD = 1.0   # Z-score threshold for event end (hysteresis)
+MAX_FRAME_GAP = 2     # Maximum gap between frames to group into same event
+Y_CROP = 3            # Number of pixels to crop from bottom of Y dimension
+BASELINE_PERCENTILE = 10  # Percentile for rolling baseline
+BASELINE_WINDOW = 600     # Window size for rolling baseline (frames) - 60s at 10Hz
+NOISE_WINDOW = 100        # Window size for MAD noise estimation (frames) - 10s at 10Hz
+MIN_EVENT_DURATION = 3    # Minimum event duration in frames
+MIN_PROMINENCE = 1.0      # Minimum prominence in MAD units
 
 
 # === PATHS ===
 BASE = Path("/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025/data") / DATE / MOUSE / RUN
-RAW_STACK_PATH = BASE / "raw" / f"runA_{RUN}_{MOUSE}_reslice_bin.tif"
+RAW_STACK_PATH = BASE / "raw" / f"runB_{RUN}_reslice.tif"
 PREPROCESSED_FOLDER = BASE / "preprocessed"
 PREPROCESSED_FOLDER.mkdir(exist_ok=True)
 
@@ -103,22 +111,95 @@ def main():
     stack_smooth = gaussian_filter(stack_norm, sigma=1)
     ZS = np.arange(stack_smooth.shape[1])  # Use all Z planes
 
-    # === DETECT ACTIVE FRAMES ===
-    print("Detecting active frames...")
+    # === DETRENDING AND EVENT DETECTION ===
+    print("Computing rolling baseline for multiplicative detrending...")
     frame_scores = stack_smooth.max(axis=(1, 2, 3))
-    active_frames = np.where(frame_scores > ACTIVITY_THRESHOLD)[0]
+    
+    # Pad signal for edge handling
+    padded_scores = np.pad(frame_scores, BASELINE_WINDOW//2, mode='reflect')
+    
+    # Compute rolling percentile baseline with padding
+    baseline = np.zeros_like(frame_scores)
+    half_window = BASELINE_WINDOW // 2
+    
+    for i in range(len(frame_scores)):
+        start = i  # Already padded
+        end = i + BASELINE_WINDOW
+        baseline[i] = np.percentile(padded_scores[start:end], BASELINE_PERCENTILE)
+    
+    # Multiplicative detrending: F_corr = F/B - 1
+    f_corr = (frame_scores / (baseline + 1e-6)) - 1
+    
+    # Compute rolling MAD for robust noise estimation
+    mad_values = np.zeros_like(f_corr)
+    half_noise_window = NOISE_WINDOW // 2
+    
+    for i in range(len(f_corr)):
+        start = max(0, i - half_noise_window)
+        end = min(len(f_corr), i + half_noise_window + 1)
+        window_data = f_corr[start:end]
+        median_val = np.median(window_data)
+        mad_values[i] = np.median(np.abs(window_data - median_val))
+    
+    # Compute robust z-scores
+    median_f_corr = np.median(f_corr)
+    z_scores = (f_corr - median_f_corr) / (1.4826 * mad_values + 1e-6)
+    
+    # Detect events with hysteresis thresholding
+    print("Detecting events with hysteresis thresholding...")
+    active_frames = []
+    in_event = False
+    event_start = None
+    
+    for i, z in enumerate(z_scores):
+        if not in_event and z > START_THRESHOLD:
+            in_event = True
+            event_start = i
+        elif in_event and z < END_THRESHOLD:
+            if event_start is not None and (i - event_start) >= MIN_EVENT_DURATION:
+                active_frames.extend(range(event_start, i + 1))
+            in_event = False
+            event_start = None
+    
+    # Handle case where event extends to end of recording
+    if in_event and event_start is not None:
+        if (len(z_scores) - event_start) >= MIN_EVENT_DURATION:
+            active_frames.extend(range(event_start, len(z_scores)))
+    
+    active_frames = np.array(active_frames)
     np.save(ACTIVE_FRAMES_PATH, active_frames)
-    print(f"Detected {len(active_frames)} active frames.")
+    print(f"Detected {len(active_frames)} active frames using robust method.")
 
     # === ACTIVITY TIMELINE PLOT ===
     print("Creating activity timeline plot...")
-    plt.figure(figsize=(12, 3))
-    plt.plot(frame_scores)
-    plt.scatter(active_frames, frame_scores[active_frames], color='red')
-    plt.axhline(ACTIVITY_THRESHOLD, color='gray', linestyle='--')
-    plt.title("Detected Events")
-    plt.xlabel("Frame")
-    plt.ylabel("Max activity")
+    fig, axes = plt.subplots(3, 1, figsize=(12, 9), sharex=True)
+    
+    # Top: Raw signal with baseline
+    axes[0].plot(frame_scores, label='Raw signal', alpha=0.7)
+    axes[0].plot(baseline, label='Rolling baseline', color='orange')
+    axes[0].set_ylabel("Max activity")
+    axes[0].legend()
+    axes[0].set_title("Raw Signal and Rolling Baseline")
+    
+    # Middle: Multiplicatively corrected signal
+    axes[1].plot(f_corr, label='F/B - 1', color='green')
+    axes[1].set_ylabel("Corrected ΔF/F")
+    axes[1].legend()
+    axes[1].set_title("Multiplicatively Detrended Signal")
+    axes[1].axhline(0, color='black', linestyle='-', alpha=0.3)
+    
+    # Bottom: Z-scores with detections
+    axes[2].plot(z_scores, label='Z-score', color='blue')
+    if len(active_frames) > 0:
+        axes[2].scatter(active_frames, z_scores[active_frames], color='red', s=1, label='Detected events')
+    axes[2].axhline(START_THRESHOLD, color='red', linestyle='--', label=f'Start threshold ({START_THRESHOLD})')
+    axes[2].axhline(END_THRESHOLD, color='orange', linestyle='--', label=f'End threshold ({END_THRESHOLD})')
+    axes[2].axhline(0, color='black', linestyle='-', alpha=0.3)
+    axes[2].set_xlabel("Frame")
+    axes[2].set_ylabel("Robust Z-score")
+    axes[2].legend()
+    axes[2].set_title("Robust Z-scores with Hysteresis Detection")
+    
     plt.tight_layout()
     plt.savefig(PREPROCESSED_FOLDER / "activity_timeline.pdf", format='pdf')
     plt.close()

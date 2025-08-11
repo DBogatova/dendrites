@@ -22,22 +22,23 @@ import pickle
 from pathlib import Path
 import pandas as pd
 import gc
+from tqdm import tqdm
 
 # Set matplotlib parameters
 mpl.rcParams['font.family'] = 'CMU Serif'
 mpl.rcParams['axes.unicode_minus'] = False  # Use standard minus sign instead of Unicode
 
 # === CONFIGURATION ===
-DATE = "2025-03-26"
+DATE = "2025-08-06"
 MOUSE = "organoid"
-RUN = "run6"
+RUN = "run4"
 Y_CROP = 3
 FRAME_RATE = 5  # Frames per second
 
 # === PATHS ===
 PROJECT_ROOT = Path("/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025")
 BASE = PROJECT_ROOT / "data" / DATE / MOUSE / RUN
-RAW_STACK_PATH = BASE / "raw" / f"runA_{RUN}_{MOUSE}_reslice_bin.tif"
+RAW_STACK_PATH = BASE / "raw" / f"runB_{RUN}_reslice.tif"
 MASK_FOLDER = BASE / "labelmaps_curated_dynamic"
 TRACE_FOLDER = BASE / "traces"
 TRACE_FOLDER.mkdir(exist_ok=True)
@@ -49,8 +50,8 @@ PREVIEW_FOLDER.mkdir(exist_ok=True)
 # === PLOTTING OPTIONS ===
 PLOT_ALL_TRACES = False
 SELECTED_NAMES = [
-    "dend_006", "dend_014", "dend_019", "dend_035",
-    "dend_023", "dend_025", "dend_027"
+    "dend_002", "dend_006", "dend_007", "dend_008",
+    "dend_010", "dend_011", "dend_024"
 ]
 
 def interpolate_motion_artifacts(trace, start_frame=418, end_frame=440):
@@ -85,19 +86,32 @@ def interpolate_motion_artifacts(trace, start_frame=418, end_frame=440):
 
 def main():
     # === LOAD RAW STACK AND CALCULATE ΔF/F ===
-    print("Loading and computing ΔF/F stack...")
+    print("Loading raw stack...")
     raw_stack = tifffile.imread(RAW_STACK_PATH).astype(np.float32)
-    raw_stack = raw_stack[:, :, :-Y_CROP, :]
-    T = raw_stack.shape[0]
+    if Y_CROP > 0:
+        raw_stack = raw_stack[:, :, :-Y_CROP, :]
+    T, Z, Y, X = raw_stack.shape
+    print(f"Stack shape: {raw_stack.shape}, Memory: {raw_stack.nbytes / 1e9:.1f} GB")
 
-    # Calculate F0 as the mean of the lowest 20% of values
-    sorted_stack = np.sort(raw_stack, axis=0)
-    lowest_20pct = sorted_stack[:int(T * 0.2)]
-    F0 = np.mean(lowest_20pct, axis=0)
-    dff_stack = (raw_stack - F0[None]) / (F0[None] + 1e-6)
+    # Calculate F0 efficiently without full sort
+    print("Computing F0 baseline...")
+    with tqdm(total=1, desc="Computing F0 baseline") as pbar:
+        F0 = np.percentile(raw_stack, 20, axis=0)
+        pbar.update(1)
     
-    # Free memory
-    del sorted_stack, lowest_20pct
+    print("Computing ΔF/F in chunks to save memory...")
+    # Process in time chunks to avoid memory issues
+    chunk_size = min(50, T)  # Process 50 frames at a time
+    dff_stack = np.zeros_like(raw_stack)
+    
+    for t_start in tqdm(range(0, T, chunk_size), desc="Computing ΔF/F"):
+        t_end = min(t_start + chunk_size, T)
+        chunk = raw_stack[t_start:t_end]
+        dff_stack[t_start:t_end] = (chunk - F0[None]) / (F0[None] + 1e-6)
+        del chunk
+        gc.collect()
+    
+    del raw_stack  # Free the original stack
     gc.collect()
 
     # === PROCESS CURATED MASKS ===
@@ -106,7 +120,7 @@ def main():
     traces = []
     labels = []
 
-    for path in mask_paths:
+    for path in tqdm(mask_paths, desc="Processing masks"):
         name = path.stem.replace("_labelmap", "")
         mask = tifffile.imread(path).astype(bool)
         if not np.any(mask):
@@ -121,9 +135,16 @@ def main():
         # Shell is the dilated mask minus the original mask (surrounding region)
         shell_mask = binary_dilation(mask, structure=ball(3)) & ~mask
         
-        # Calculate mean trace for core and background
-        core_trace = dff_stack[:, core_mask].mean(axis=1)
-        bg_trace = dff_stack[:, shell_mask].mean(axis=1) if np.any(shell_mask) else 0
+        # Calculate mean trace for core and background (memory efficient)
+        core_trace = np.zeros(T)
+        bg_trace = np.zeros(T)
+        
+        # Process in chunks to avoid memory issues
+        for t_start in range(0, T, chunk_size):
+            t_end = min(t_start + chunk_size, T)
+            core_trace[t_start:t_end] = dff_stack[t_start:t_end][:, core_mask].mean(axis=1)
+            if np.any(shell_mask):
+                bg_trace[t_start:t_end] = dff_stack[t_start:t_end][:, shell_mask].mean(axis=1)
 
         # === Final ΔF/F (%) ===
         dff = core_trace - bg_trace
@@ -184,7 +205,7 @@ def main():
         fig.tight_layout()
         fig.savefig(PREVIEW_FOLDER / f"{name}_trace_mip.pdf", format='pdf')
         plt.close(fig)
-        print(f"[✓] Saved: {name}_trace_mip.pdf")
+        # Progress is shown by tqdm, no need for individual prints
 
     # === SAVE TO PKL AND CSV ===
     print("Saving traces to files...")

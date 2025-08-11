@@ -27,9 +27,9 @@ from skimage.measure import label, regionprops
 from scipy.spatial.distance import cdist
 
 # === CONFIGURATION ===
-DATE = "2025-03-26"
+DATE = "2025-08-06"
 MOUSE = "organoid"
-RUN = "run6"
+RUN = "run4"
 
 # === PATHS ===
 BASE = Path("/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025/data") / DATE / MOUSE / RUN

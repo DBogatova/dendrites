@@ -14,9 +14,9 @@ import pandas as pd
 from pathlib import Path
 
 # === CONFIGURATION ===
-DATE = "2025-03-26"
+DATE = "2025-08-06"
 MOUSE = "organoid"
-RUN = "run6"
+RUN = "run4"
 
 # === PATHS ===
 BASE = Path("/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025/data") / DATE / MOUSE / RUN
