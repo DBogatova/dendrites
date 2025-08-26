@@ -22,9 +22,9 @@ import cv2
 import gc
 
 # === CONFIGURATION ===
-DATE = "2025-04-22"
+DATE = "2025-08-19"
 MOUSE = "rAi162_15"
-RUN = "run6"
+RUN = "run7"
 
 # === PATHS ===
 BASE = Path("/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025/data") / DATE / MOUSE / RUN
@@ -35,13 +35,13 @@ OUTPUT_LABELMAP_FOLDER.mkdir(parents=True, exist_ok=True)
 PREVIEW_FOLDER.mkdir(parents=True, exist_ok=True)
 
 # === PARAMETERS ===
-VOXEL_SIZE = (4.7, 0.5, 0.6)  # (Z, Y, X) in microns
+VOXEL_SIZE = (9.4, 1.0, 1.2)  # (Z, Y, X) in microns
 VOXEL_VOL = np.prod(VOXEL_SIZE)
-MIN_VOL = 5000       # Minimum dendrite volume in µm³
-MAX_VOL = 150000     # Maximum dendrite volume in µm³
+MIN_VOL = 3000       # Minimum dendrite volume in µm³
+MAX_VOL = 80000     # Maximum dendrite volume in µm³
 Y_CROP = 3          # Number of pixels to crop from bottom of Y dimension
 INTENSITY_PERCENTILE = 99.9  # Percentile for thresholding
-MAX_DENDRITES_TOTAL = 200    # Maximum number of dendrites to extract
+MAX_DENDRITES_TOTAL = 300    # Maximum number of dendrites to extract
 DUPLICATE_THRESHOLD = 0.9    # Dice coefficient threshold for duplicate detection
 MIN_EVENT_LENGTH = 1         # Minimum number of frames in an event
 MAX_FRAME_GAP = 2            # Maximum gap between frames in an event

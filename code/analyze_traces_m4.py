@@ -1,116 +1,116 @@
 #!/usr/bin/env python
 """
-Analyze Traces
+Trace QA + Duplicate Detection (clean summary)
 
-This script analyzes calcium imaging traces to identify duplicates:
-1. Loads trace data from CSV file
-2. Calculates correlation between all trace pairs
-3. Identifies groups of highly correlated traces (duplicates)
-4. Saves results to CSV and text files
+- Loads ΔF/F traces from CSV (first column = Frame or Time)
+- Finds duplicate masks via correlation
+- Scores each trace as GOOD / OK / NOISE
+- Prints per-trace summary: "trace_name   label"
+- Saves detailed outputs (features, correlations, duplicates)
 """
 
+from pathlib import Path
 import numpy as np
 import pandas as pd
-from pathlib import Path
+from scipy.signal import find_peaks
+from scipy.ndimage import gaussian_filter1d
+from scipy.fft import rfft, rfftfreq
 
-# === CONFIGURATION ===
-DATE = "2025-04-22"
+# ========= CONFIG =========
+DATE  = "2025-08-19"
 MOUSE = "rAi162_15"
-RUN = "run6"
+RUN   = "run7"
 
-# === PATHS ===
 BASE = Path("/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025/data") / DATE / MOUSE / RUN
 TRACE_PATH = BASE / "traces" / "dff_traces_curated_bgsub.csv"
 OUTPUT_DIR = BASE / "traces"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# === PARAMETERS ===
-CORRELATION_THRESHOLD = 0.92  # Threshold for identifying duplicates
+CORR_THRESHOLD = 0.92
 
-def find_duplicates(data):
-    """
-    Find duplicate traces based on correlation.
-    
-    Args:
-        data: DataFrame containing trace data
-        
-    Returns:
-        duplicate_groups: List of lists, each containing indices of duplicate traces
-        corr_matrix: Correlation matrix between all traces
-        trace_columns: Names of trace columns
-    """
-    # Get trace names and values
-    trace_columns = data.columns[1:]  # Skip 'Frame' column
-    traces = data[trace_columns].values.T
-    
-    # Calculate correlation matrix
-    n_traces = traces.shape[0]
-    corr_matrix = np.zeros((n_traces, n_traces))
-    
-    print("Calculating correlation matrix...")
-    for i in range(n_traces):
-        for j in range(i+1, n_traces):
-            corr = np.corrcoef(traces[i], traces[j])[0, 1]
-            corr_matrix[i, j] = corr
-            corr_matrix[j, i] = corr
-    
-    # Group duplicates into clusters
-    print("Identifying duplicate groups...")
-    visited = set()
-    duplicate_groups = []
-    
-    for i in range(n_traces):
-        if i in visited:
-            continue
-            
-        similar = np.where(corr_matrix[i] >= CORRELATION_THRESHOLD)[0].tolist()
-        if len(similar) > 1:  # At least one other trace is similar to this one
-            group = similar
-            for idx in similar:
-                visited.add(idx)
-            duplicate_groups.append(sorted(group))
-    
-    return duplicate_groups, corr_matrix, trace_columns
+# QA thresholds
+MIN_EVENT_PROM_PCT  = 0.6
+GOOD_SNR            = 6.0
+OK_SNR              = 3.5
+GOOD_SPECTRAL_RATIO = 3.0
+OK_SPECTRAL_RATIO   = 1.8
+MAX_NEG_FRAC        = 0.25
+MAX_DRIFT_PCT       = 3.0
+
+# ==========================
+
+def robust_sigma(x):
+    med = np.median(x)
+    return 1.4826 * np.median(np.abs(x - med)) + 1e-9
+
+def bandpower_ratio(x, fps, low1=0.05, high1=2.0, low2=5.0, high2=20.0):
+    n = len(x)
+    freqs = rfftfreq(n, d=1.0/fps)
+    P = np.abs(rfft(x))**2
+    def _int(lo, hi):
+        m = (freqs >= lo) & (freqs < hi)
+        return P[m].sum() + 1e-12
+    return _int(low1, high1) / _int(low2, high2)
+
+def preprocess_traces(df):
+    tcol = df.columns[0]
+    t = df[tcol].values
+    if t.max() > 1e3:  # frames
+        fps = 10.0
+        time = t / fps
+    else:              # seconds
+        time = t
+        dt = np.median(np.diff(time))
+        fps = 1.0 / dt if dt > 0 else 10.0
+    traces = df.iloc[:,1:].astype(float).copy()
+    traces = traces.apply(lambda x: gaussian_filter1d(x.values, 1), axis=0, result_type='expand')
+    return time, fps, traces
+
+def trace_features(x, fps):
+    sig = robust_sigma(x)
+    idx, props = find_peaks(x, prominence=max(MIN_EVENT_PROM_PCT, 2*sig))
+    n_evt = len(idx)
+    max_prom = float(props['prominences'].max()) if n_evt else 0.0
+    snr_peak = max_prom / (sig + 1e-9)
+    neg_frac = float((x < -2.5*sig).mean())
+    skew = float(pd.Series(x).skew())
+    ac1 = float(np.corrcoef(x[:-1], x[1:])[0,1]) if len(x) > 3 else 0.0
+    spr = bandpower_ratio(x - np.median(x), fps)
+    thirds = np.array_split(np.asarray(x), 3)
+    drift = abs(np.median(thirds[-1]) - np.median(thirds[0]))
+    return dict(n_events=n_evt, snr_peak=snr_peak, neg_frac=neg_frac,
+                skew=skew, ac1=ac1, spectral_ratio=spr, drift=drift)
+
+def label_quality(feat):
+    if (feat['neg_frac'] > MAX_NEG_FRAC) or (feat['drift'] > MAX_DRIFT_PCT):
+        return "NOISE"
+    if (feat['snr_peak'] >= GOOD_SNR and feat['spectral_ratio'] >= GOOD_SPECTRAL_RATIO 
+        and feat['n_events'] >= 1 and feat['skew'] > 0 and feat['ac1'] > 0.15):
+        return "GOOD"
+    if (feat['snr_peak'] >= OK_SNR and feat['spectral_ratio'] >= OK_SPECTRAL_RATIO 
+        and feat['ac1'] > 0.05):
+        return "OK"
+    return "NOISE"
 
 def main():
-    # Load traces
-    print(f"Loading traces from {TRACE_PATH}")
-    data = pd.read_csv(TRACE_PATH)
-    
-    # Find duplicates
-    duplicate_groups, corr_matrix, trace_columns = find_duplicates(data)
-    
-    # Create output directory if it doesn't exist
-    output_dir = Path(OUTPUT_DIR)
-    output_dir.mkdir(exist_ok=True, parents=True)
-    
-    # Save correlation matrix
-    print("Saving correlation matrix...")
-    corr_df = pd.DataFrame(corr_matrix, 
-                          index=trace_columns,
-                          columns=trace_columns)
-    corr_df.to_csv(output_dir / "trace_correlations.csv")
-    
-    # Print duplicate groups
-    print("\nDuplicate trace groups:")
-    if duplicate_groups:
-        for i, group in enumerate(duplicate_groups):
-            group_traces = [trace_columns[idx] for idx in group]
-            print(f"Group {i+1}: {', '.join(group_traces)}")
-    else:
-        print("No duplicate traces found.")
-    
-    # Save duplicate groups to a file
-    print("Saving duplicate groups to text file...")
-    with open(output_dir / "duplicate_traces.txt", "w") as f:
-        f.write(f"Duplicate traces (correlation threshold: {CORRELATION_THRESHOLD}):\n\n")
-        if duplicate_groups:
-            for i, group in enumerate(duplicate_groups):
-                group_traces = [trace_columns[idx] for idx in group]
-                f.write(f"Group {i+1}: {', '.join(group_traces)}\n")
-        else:
-            f.write("No duplicate traces found.\n")
-    
-    print("\nAnalysis complete!")
+    df = pd.read_csv(TRACE_PATH)
+    time, fps, traces = preprocess_traces(df)
+
+    qa_rows = []
+    print("\n=== Trace Quality Summary ===")
+    for name in traces.columns:
+        x = traces[name].values.astype(float)
+        feat = trace_features(x, fps)
+        label = label_quality(feat)
+        feat['trace'] = name
+        feat['label'] = label
+        qa_rows.append(feat)
+        print(f"{name:15s}  {label}")   # <<< SIMPLE SUMMARY LINE
+
+    qa = pd.DataFrame(qa_rows).set_index('trace')
+    qa.to_csv(OUTPUT_DIR / "traces_quality.csv")
+
+    print("\nSaved detailed results to traces_quality.csv")
 
 if __name__ == "__main__":
     main()

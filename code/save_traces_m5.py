@@ -28,16 +28,16 @@ mpl.rcParams['font.family'] = 'CMU Serif'
 mpl.rcParams['axes.unicode_minus'] = False  # Use standard minus sign instead of Unicode
 
 # === CONFIGURATION ===
-DATE = "2025-04-22"
+DATE = "2025-08-19"
 MOUSE = "rAi162_15"
-RUN = "run6"
+RUN = "run7"
 Y_CROP = 3
 FRAME_RATE = 5  # Frames per second
 
 # === PATHS ===
 PROJECT_ROOT = Path("/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025")
 BASE = PROJECT_ROOT / "data" / DATE / MOUSE / RUN
-RAW_STACK_PATH = BASE / "raw" / f"runA_{RUN}_{MOUSE}_reslice_bin.tif"
+RAW_STACK_PATH = BASE / "raw" / f"runA_{RUN}_{MOUSE}_reslice_green_ok.tif"
 MASK_FOLDER = BASE / "labelmaps_curated_dynamic"
 TRACE_FOLDER = BASE / "traces"
 TRACE_FOLDER.mkdir(exist_ok=True)
@@ -56,22 +56,31 @@ SELECTED_NAMES = [
 
 
 def main():
-    # === LOAD RAW STACK AND CALCULATE ΔF/F ===
+    # === LOAD RAW STACK METADATA ===
+    print("Loading stack metadata...")
+    with tifffile.TiffFile(RAW_STACK_PATH) as tif:
+        shape = tif.series[0].shape
+    
+    T, Z, Y, X = shape
+    if Y_CROP > 0:
+        Y = Y - Y_CROP
+    
+    print(f"Stack shape: T={T}, Z={Z}, Y={Y}, X={X}")
+    
+    # === LOAD AND CALCULATE ΔF/F STACK ===
     print("Loading and computing ΔF/F stack...")
     raw_stack = tifffile.imread(RAW_STACK_PATH).astype(np.float32)
     if Y_CROP > 0:
         raw_stack = raw_stack[:, :, :-Y_CROP, :]
-    T = raw_stack.shape[0]
-
-    # Calculate F0 as the mean of the lowest 20% of values
-    sorted_stack = np.sort(raw_stack, axis=0)
-    lowest_20pct = sorted_stack[:int(T * 0.2)]
-    F0 = np.mean(lowest_20pct, axis=0)
+    
+    n_baseline = int(T * 0.2)
+    F0 = np.mean(raw_stack[:n_baseline], axis=0)
     dff_stack = (raw_stack - F0[None]) / (F0[None] + 1e-6)
     
-    # Free memory
-    del sorted_stack, lowest_20pct
+    # Free raw stack memory
+    del raw_stack, F0
     gc.collect()
+    print(f"ΔF/F stack computed from {T} frames")
 
     # === PROCESS CURATED MASKS ===
     print(f"Loading curated masks from: {MASK_FOLDER}")
@@ -83,30 +92,28 @@ def main():
         name = path.stem.replace("_labelmap", "")
         mask = tifffile.imread(path).astype(bool)
         
-        # Ensure mask dimensions match raw stack
-        if mask.shape != dff_stack.shape[1:]:
-            print(f"Adjusting mask {name} from {mask.shape} to {dff_stack.shape[1:]}")
+        # Ensure mask dimensions match expected shape
+        if mask.shape != (Z, Y, X):
+            print(f"Adjusting mask {name} from {mask.shape} to ({Z}, {Y}, {X})")
             # If mask is smaller in Y, pad it; if larger, crop it
-            if mask.shape[1] < dff_stack.shape[2]:
-                pad_y = dff_stack.shape[2] - mask.shape[1]
+            if mask.shape[1] < Y:
+                pad_y = Y - mask.shape[1]
                 mask = np.pad(mask, ((0,0), (0,pad_y), (0,0)), mode='constant')
-            elif mask.shape[1] > dff_stack.shape[2]:
-                crop_y = mask.shape[1] - dff_stack.shape[2]
+            elif mask.shape[1] > Y:
+                crop_y = mask.shape[1] - Y
                 mask = mask[:, :-crop_y, :]
         
         if not np.any(mask):
             continue
 
         # === Extract core and shell ===
-        # Core is the eroded mask (inner region)
         core_mask = binary_erosion(mask, structure=ball(1))
         if not np.any(core_mask):
             core_mask = mask.copy()
-
-        # Shell is the dilated mask minus the original mask (surrounding region)
         shell_mask = binary_dilation(mask, structure=ball(3)) & ~mask
         
-        # Calculate mean trace for core and background
+        # === Extract traces ===
+        print(f"Processing {name}...")
         core_trace = dff_stack[:, core_mask].mean(axis=1)
         bg_trace = dff_stack[:, shell_mask].mean(axis=1) if np.any(shell_mask) else 0
 
@@ -163,6 +170,10 @@ def main():
         fig.savefig(PREVIEW_FOLDER / f"{name}_trace_mip.pdf", format='pdf')
         plt.close(fig)
         print(f"[✓] Saved: {name}_trace_mip.pdf")
+
+    # Clean up dff stack
+    del dff_stack
+    gc.collect()
 
     # === SAVE TO PKL AND CSV ===
     print("Saving traces to files...")
