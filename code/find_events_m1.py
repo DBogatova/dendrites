@@ -26,9 +26,9 @@ import gc
 mpl.rcParams['font.family'] = 'CMU Serif'
 
 # === CONFIGURATION ===
-DATE = "2025-08-19"
-MOUSE = "rAi162_15"
-RUN = "run7"
+DATE = "2025-08-27"
+MOUSE = "rAi162_18"
+RUN = "run2"
 CROP_RADIUS = 5  # Number of frames to include before/after each event
 START_THRESHOLD = 1  # Z-score threshold for event start
 END_THRESHOLD = 0   # Z-score threshold for event end (hysteresis)
@@ -43,7 +43,7 @@ MIN_PROMINENCE = 1.0      # Minimum prominence in MAD units
 
 # === PATHS ===
 BASE = Path("/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025/data") / DATE / MOUSE / RUN
-RAW_STACK_PATH = BASE / "raw" / f"runA_{RUN}_{MOUSE}_reslice_green_ok.tif"
+RAW_STACK_PATH = BASE / "raw" / f"runA_{RUN}_{MOUSE}_green_reslice.tif"
 PREPROCESSED_FOLDER = BASE / "preprocessed"
 PREPROCESSED_FOLDER.mkdir(exist_ok=True)
 

@@ -8,10 +8,10 @@ import tifffile
 from pathlib import Path
 
 # Path to your 4D stack
-STACK_PATH = "/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025/data/2025-04-22/rAi162_15/run6/overlays/multi_dendrites_dff_branches.tif"
+STACK_PATH = "/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025/data/2025-08-19/rAi162_15/run7/overlays/chunk_02_0600-1200_dff.tif"
 
 # Voxel scaling (T, Z, Y, X) - adjust time scale as needed
-VOXEL_SCALE = (1, 4.7, 0.5, 0.6)  # Time in frames, spatial in microns
+VOXEL_SCALE = (1, 9.4, 1.0, 1.2)  # Time in frames, spatial in microns
 
 # Load and view
 print(f"Loading: {STACK_PATH}")
