@@ -34,16 +34,16 @@ mpl.rcParams['font.family'] = 'CMU Serif'
 # ===== CONFIGURATION =====
 DATE = "2025-08-27"
 MOUSE = "rAi162_18"
-RUN   = "run2"
+RUN   = "run7"
 
 # Z-handling
 ZMIN = 0            # inclusive
 ZMAX = -1           # exclusive; -1 means "use full Z"
 
 # Projections
-ACH_PROJ = "mip"   # 'mean' | 'mip' | 'percentile'
+ACH_PROJ = "mean"   # 'mean' | 'mip' | 'percentile'
 ACH_PCT  = 80.0     # if ACH_PROJ == 'percentile'
-CA_PROJ  = "mip"    # 'mean' | 'mip' | 'percentile'
+CA_PROJ  = "mean"    # 'mean' | 'mip' | 'percentile'
 
 # ΔF/F baseline (global trace)
 DFF_WINDOW = 301    # frames (odd); e.g., ~30 s at 10 Hz

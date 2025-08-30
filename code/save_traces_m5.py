@@ -28,16 +28,16 @@ mpl.rcParams['font.family'] = 'CMU Serif'
 mpl.rcParams['axes.unicode_minus'] = False  # Use standard minus sign instead of Unicode
 
 # === CONFIGURATION ===
-DATE = "2025-08-19"
-MOUSE = "rAi162_15"
+DATE = "2025-08-27"
+MOUSE = "rAi162_18"
 RUN = "run7"
 Y_CROP = 3
-FRAME_RATE = 5  # Frames per second
+FRAME_RATE = 10  # Frames per second
 
 # === PATHS ===
 PROJECT_ROOT = Path("/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025")
 BASE = PROJECT_ROOT / "data" / DATE / MOUSE / RUN
-RAW_STACK_PATH = BASE / "raw" / f"runA_{RUN}_{MOUSE}_reslice_green_ok.tif"
+RAW_STACK_PATH = BASE / "raw" / f"runA_{RUN}_{MOUSE}_green_reslice.tif"
 MASK_FOLDER = BASE / "labelmaps_curated_dynamic"
 TRACE_FOLDER = BASE / "traces"
 TRACE_FOLDER.mkdir(exist_ok=True)
@@ -47,10 +47,10 @@ PREVIEW_FOLDER = BASE / "trace_previews_curated"
 PREVIEW_FOLDER.mkdir(exist_ok=True)
 
 # === PLOTTING OPTIONS ===
-PLOT_ALL_TRACES = True
+PLOT_ALL_TRACES = False
 SELECTED_NAMES = [
-    "dend_006", "dend_014", "dend_019", "dend_035",
-    "dend_023", "dend_025", "dend_027"
+    "dend_001", "dend_004", "dend_010", "dend_011",
+    "dend_015", "dend_016", "dend_017", "dend_035"
 ]
 
 
@@ -208,7 +208,7 @@ def main():
     # === Add scale bar ===
     scale_bar_x = t[-1] - 7  # Position from right edge
     scale_bar_y_start = offset * (count - 0.5)  # Near the top trace
-    scale_bar_height = 2  # 2% ΔF/F
+    scale_bar_height = 5  # 5% ΔF/F
 
     ax.plot([scale_bar_x, scale_bar_x], 
            [scale_bar_y_start, scale_bar_y_start + scale_bar_height], 
@@ -218,7 +218,7 @@ def main():
 
     # Set plot limits and labels
     ax.set_xlim(0, t[-1])
-    ax.set_ylim(-offset, count * offset + 10)
+    ax.set_ylim(-offset, count * offset + 20)
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("ΔF/F (%) + offset")
     ax.set_yticks([])

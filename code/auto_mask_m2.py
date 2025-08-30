@@ -1,215 +1,247 @@
 #!/usr/bin/env python
 """
-Module 2: Automatic Mask Generation
+Module 2 — Original detector + 2D background for Napari
 
-This script automatically generates masks for dendrites by:
-1. Loading event crops from Module 1
-2. Thresholding to identify active regions
-3. Cleaning and filtering masks based on size and morphology
-4. Deduplicating similar masks
-5. Saving unique masks and visualizations
+Behavior (matches your initial algorithm):
+  1) Load each event crop (T,Z,Y,X)
+  2) Threshold the whole event by a global percentile
+  3) Identify active frames; group by small gaps
+  4) Time-OR the frames in each group → 3D binary
+  5) Gentle 2D clean per slice; 3D small-object removal
+  6) 3D connected components; keep by volume range
+  7) Deduplicate masks by Dice
+  8) Save each 3D mask + a 2D background (Z-MIP of time-max) + preview + manifest row
 """
 
+import gc
+import csv
+from pathlib import Path
+
+import cv2
 import tifffile
 import numpy as np
-from pathlib import Path
-from skimage.filters import threshold_otsu
-from skimage.morphology import remove_small_objects, ball, label
+import matplotlib.pyplot as plt
+from skimage.morphology import remove_small_objects, label
 from skimage.measure import regionprops
 from tqdm import tqdm
-import matplotlib.pyplot as plt
-import cv2
-import gc
 
-# === CONFIGURATION ===
-DATE = "2025-08-19"
-MOUSE = "rAi162_15"
+# ================== CONFIG ==================
+DATE = "2025-08-27"
+MOUSE = "rAi162_18"
 RUN = "run7"
 
-# === PATHS ===
 BASE = Path("/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025/data") / DATE / MOUSE / RUN
 EVENT_FOLDER = BASE / "preprocessed" / "event_crops"
-OUTPUT_LABELMAP_FOLDER = BASE / "labelmaps"
-PREVIEW_FOLDER = BASE / "labelmap_previews"
-OUTPUT_LABELMAP_FOLDER.mkdir(parents=True, exist_ok=True)
-PREVIEW_FOLDER.mkdir(parents=True, exist_ok=True)
+OUT_LABELS   = BASE / "labelmaps"
+OUT_PREV     = BASE / "labelmap_previews"
+OUT_BGS      = BASE / "labelmap_backgrounds"   # 2D backgrounds for viz
+MANIFEST     = BASE / "masks_manifest.csv"
+for p in (OUT_LABELS, OUT_PREV, OUT_BGS): p.mkdir(parents=True, exist_ok=True)
 
-# === PARAMETERS ===
-VOXEL_SIZE = (9.4, 1.0, 1.2)  # (Z, Y, X) in microns
-VOXEL_VOL = np.prod(VOXEL_SIZE)
-MIN_VOL = 3000       # Minimum dendrite volume in µm³
-MAX_VOL = 80000     # Maximum dendrite volume in µm³
-Y_CROP = 3          # Number of pixels to crop from bottom of Y dimension
-INTENSITY_PERCENTILE = 99.9  # Percentile for thresholding
-MAX_DENDRITES_TOTAL = 300    # Maximum number of dendrites to extract
-DUPLICATE_THRESHOLD = 0.9    # Dice coefficient threshold for duplicate detection
-MIN_EVENT_LENGTH = 1         # Minimum number of frames in an event
-MAX_FRAME_GAP = 2            # Maximum gap between frames in an event
+# ---- Parameters (faithful to the original; adjust if needed) ----
+VOXEL_SIZE = (9.4, 1.0, 1.2)       # (Z,Y,X) μm
+VOXEL_VOL  = float(np.prod(VOXEL_SIZE))
 
+INTENSITY_PERCENTILE = 99.9        # ← your original default
+Y_CROP_BOTTOM = 3
+MAX_FRAME_GAP = 2
+MIN_EVENT_LENGTH = 1
+
+MIN_VOL = 3000.0                    # μm³
+MAX_VOL = None                 # μm³   (set to None to disable upper cap)
+
+SLICE_OPEN_K  = 3                  # small open to tidy specks
+SLICE_CLOSE_K = 3                  # small close to fill pinholes
+SLICE_MIN_PIX = 20                 # 2D speck filter before 3D CC
+
+DUPLICATE_DICE = 0.90
+MAX_DENDRITES_TOTAL = 300
+
+# ================== HELPERS ==================
 def group_frames(frames, gap):
-    """
-    Group consecutive frame numbers into events, allowing for small gaps.
-    
-    Args:
-        frames: Array of frame numbers
-        gap: Maximum allowed gap between consecutive frames to be in same group
-        
-    Returns:
-        List of lists, where each inner list contains frame numbers for one event
-    """
-    if len(frames) == 0:
-        return []
-        
-    groups = []
-    group = [frames[0]]
-    
+    if len(frames) == 0: return []
+    frames = np.array(frames, dtype=int); frames.sort()
+    groups, cur = [], [int(frames[0])]
     for f in frames[1:]:
-        if f - group[-1] <= gap:
-            group.append(f)
-        else:
-            groups.append(group)
-            group = [f]
-            
-    groups.append(group)
-    return groups
+        f = int(f)
+        if f - cur[-1] <= gap: cur.append(f)
+        else: groups.append(cur); cur = [f]
+    groups.append(cur); return groups
 
-def dice_coeff(a, b):
-    """
-    Calculate Dice coefficient between two binary masks.
-    
-    Args:
-        a, b: Binary masks to compare
-        
-    Returns:
-        Dice coefficient (0-1), where 1 means perfect overlap
-    """
-    # Return 0 if shapes don't match
-    if a.shape != b.shape:
-        return 0
-        
-    intersection = np.logical_and(a, b).sum()
-    volume = a.sum() + b.sum()
-    return 2 * intersection / volume if volume > 0 else 0
+def dice_coeff(a: np.ndarray, b: np.ndarray) -> float:
+    if a.shape != b.shape: return 0.0
+    inter = np.logical_and(a, b).sum(dtype=np.int64)
+    tot   = a.sum(dtype=np.int64) + b.sum(dtype=np.int64)
+    return (2.0 * inter / tot) if tot > 0 else 0.0
 
+def z_mip_background_2d(stack_TZYX, t0, t1) -> np.ndarray:
+    """2D background for Napari: Z-MIP of time-max over the event window."""
+    seg = stack_TZYX[t0:t1]
+    if seg.size == 0: return np.zeros(stack_TZYX.shape[2:], dtype=np.float16)
+    vol_tmax = np.max(seg, axis=0)      # (Z,Y,X)
+    return np.max(vol_tmax, axis=0).astype(np.float16)  # (Y,X)
+
+# ================== MAIN ==================
 def main():
-    # === LOAD EVENTS ===
     event_paths = sorted(EVENT_FOLDER.glob("event_group_*.tif"))
     print(f"Found {len(event_paths)} grouped event files.")
 
-    dendrite_id = 0
-    raw_masks = []
-    dendrite_volumes = []
+    raw_masks = []  # tuples: (mask3d, vol_um3, event_path, t_start, t_end, bg2d)
+    extracted = 0
 
-    # === EXTRACT DENDRITES FROM EVENTS ===
+    se_open  = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (SLICE_OPEN_K, SLICE_OPEN_K))
+    se_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (SLICE_CLOSE_K, SLICE_CLOSE_K))
+
     for path in tqdm(event_paths, desc="Extracting dendrites"):
-        if dendrite_id >= MAX_DENDRITES_TOTAL:
-            break
+        if extracted >= MAX_DENDRITES_TOTAL: break
 
-        # Load event stack
-        stack = tifffile.imread(path).astype(np.float32)  # (T, Z, Y, X)
-        if Y_CROP > 0:
-            stack = stack[:, :, :-Y_CROP, :]
+        stack = tifffile.imread(path).astype(np.float32)  # (T,Z,Y,X)
+        if Y_CROP_BOTTOM > 0:
+            stack = stack[:, :, :-Y_CROP_BOTTOM, :]
 
-        # Threshold to identify active regions
-        threshold = np.percentile(stack.flatten(), INTENSITY_PERCENTILE)
-        binary_stack = stack > threshold
-        activity_curve = binary_stack.max(axis=(1, 2, 3))
-        active_ts = np.where(activity_curve > 0)[0]
+        T, Z, Y, X = stack.shape
+        if T == 0:
+            del stack; continue
 
-        # Group active frames
+        # 1) Global percentile threshold over the whole event (original behavior)
+        thr = float(np.percentile(stack, INTENSITY_PERCENTILE))
+        binary = stack > thr                                # (T,Z,Y,X)
+
+        # 2) Find active frames; group small gaps
+        activity = binary.max(axis=(1, 2, 3))
+        active_ts = np.where(activity > 0)[0]
         frame_groups = group_frames(active_ts, MAX_FRAME_GAP)
 
+        # 3) For each group → 3D mask from time-OR; clean; 3D CC; volume filter
         for group in frame_groups:
-            if len(group) < MIN_EVENT_LENGTH:
-                continue
+            if extracted >= MAX_DENDRITES_TOTAL: break
+            if len(group) < MIN_EVENT_LENGTH: continue
 
-            # Create mask from active frames
-            t_start, t_end = group[0], group[-1] + 1
-            mask_3d = np.max(binary_stack[t_start:t_end], axis=0)
+            t_start = int(group[0])
+            t_end   = int(group[-1]) + 1
 
-            # Clean mask with morphological operations
-            cleaned_mask = np.zeros_like(mask_3d, dtype=np.uint8)
-            for z in range(mask_3d.shape[0]):
-                slice_mask = (mask_3d[z] * 255).astype(np.uint8)
-                # Opening (erosion followed by dilation) to remove small noise
-                cleaned = cv2.morphologyEx(slice_mask, cv2.MORPH_OPEN, 
-                                          kernel=cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
-                # Closing (dilation followed by erosion) to fill small holes
-                cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, 
-                                          kernel=cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
-                cleaned_mask[z] = cleaned > 0
+            # Time-OR to 3D (Z,Y,X)
+            mask_3d = np.any(binary[t_start:t_end], axis=0)
 
-            # Remove objects smaller than minimum volume
-            cleaned_mask = remove_small_objects(cleaned_mask.astype(bool), 
-                                              int(MIN_VOL / VOXEL_VOL))
+            if not mask_3d.any(): continue
 
-            if not np.any(cleaned_mask):
-                continue
+            # Gentle per-slice open/close and 2D speck filter
+            cleaned = np.zeros_like(mask_3d, dtype=np.uint8)
+            for z in range(Z):
+                sl = (mask_3d[z].astype(np.uint8) * 255)
+                sl = cv2.morphologyEx(sl, cv2.MORPH_OPEN,  se_open)
+                sl = cv2.morphologyEx(sl, cv2.MORPH_CLOSE, se_close)
+                slb = sl > 0
+                if SLICE_MIN_PIX > 0:
+                    lbl2 = label(slb); keep2 = np.zeros_like(slb, bool)
+                    for i2 in range(1, int(lbl2.max())+1):
+                        rr = (lbl2 == i2)
+                        if rr.sum() >= SLICE_MIN_PIX:
+                            keep2 |= rr
+                    slb = keep2
+                cleaned[z] = slb
 
-            # Label connected components and extract properties
-            labeled = label(cleaned_mask)
-            props = sorted(regionprops(labeled), key=lambda r: r.area, reverse=True)
+            # 3D speck removal by physical volume
+            cleaned = remove_small_objects(cleaned.astype(bool), int(MIN_VOL / VOXEL_VOL), connectivity=1)
+            if not cleaned.any(): continue
 
-            # Process each region
-            for region in props:
-                real_vol = region.area * VOXEL_VOL
-                if not (MIN_VOL <= real_vol <= MAX_VOL):
-                    continue
+            # 3D connected components; keep by volume range
+            lbl3 = label(cleaned)
+            props = sorted(regionprops(lbl3), key=lambda r: r.area, reverse=True)
 
-                mask = (labeled == region.label).astype(np.uint8)
-                raw_masks.append(mask)
-                dendrite_volumes.append(real_vol)
-                dendrite_id += 1
+            # 4) Save components that pass volume gates
+            for r in props:
+                voxels = int(r.area)
+                vol_um3 = voxels * VOXEL_VOL
+                if vol_um3 < MIN_VOL: continue
+                if (MAX_VOL is not None) and (vol_um3 > MAX_VOL): continue
 
-                if dendrite_id >= MAX_DENDRITES_TOTAL:
-                    break
+                m = (lbl3 == r.label).astype(np.uint8)
 
-            gc.collect()
+                # Per-mask 2D background from the same time window (fast)
+                bg2d = z_mip_background_2d(stack, t_start, t_end)
 
-    # === DEDUPLICATE MASKS ===
+                raw_masks.append((m, float(vol_um3), str(path), t_start, t_end, bg2d))
+                extracted += 1
+                if extracted >= MAX_DENDRITES_TOTAL: break
+
+        del stack, binary
+        gc.collect()
+
+    # ====== DEDUP BY 3D DICE ======
     print("Deduplicating masks...")
-    unique_masks = []
-    for i, mask in enumerate(raw_masks):
-        is_duplicate = False
-        for other in unique_masks:
-            if dice_coeff(mask, other) > DUPLICATE_THRESHOLD:
-                is_duplicate = True
-                break
-        if not is_duplicate:
-            unique_masks.append(mask)
+    unique = []
+    for m, vol, ep, ts, te, bg in raw_masks:
+        is_dup = False
+        for u in unique:
+            if m.shape != u["mask"].shape: continue
+            if dice_coeff(m.astype(bool), u["mask"].astype(bool)) > DUPLICATE_DICE:
+                is_dup = True; break
+        if not is_dup:
+            unique.append({"mask": m, "vol": vol, "event_path": ep, "t_start": ts, "t_end": te, "bg2d": bg})
 
-    print(f"\n[✓] Retained {len(unique_masks)} unique dendrites out of {len(raw_masks)}")
+    print(f"[✓] Retained {len(unique)} unique dendrites out of {len(raw_masks)}")
 
-    # === SAVE UNIQUE MASKS + MIP PREVIEWS ===
-    print("Saving masks and previews...")
-    for i, mask in enumerate(unique_masks):
-        # Save mask as TIFF
-        outpath = OUTPUT_LABELMAP_FOLDER / f"dend_{i:03d}_labelmap.tif"
-        tifffile.imwrite(outpath, mask.astype(np.uint8) * (i + 1))
+    # ====== SAVE MASKS, BACKGROUNDS, PREVIEWS, MANIFEST ======
+    print("Saving outputs...")
+    with open(MANIFEST, "w", newline="") as fcsv:
+        writer = csv.DictWriter(
+            fcsv,
+            fieldnames=[
+                "dend_id",
+                "labelmap_path",
+                "background_path",
+                "source_event_file",
+                "event_t_start",
+                "event_t_end",
+                "voxel_size_z",
+                "voxel_size_y",
+                "voxel_size_x",
+                "volume_um3",
+            ],
+        )
+        writer.writeheader()
 
-        # Create and save maximum intensity projection preview
-        mip = np.max(mask, axis=0)
-        fig, ax = plt.subplots(1, 1, figsize=(4, 4))
-        ax.imshow(mip, cmap="cividis")
-        ax.set_title(f"dend_{i:03d} MIP")
-        ax.axis("off")
-        fig.tight_layout()
-        fig.savefig(PREVIEW_FOLDER / f"dend_{i:03d}_preview.png", dpi=150)
-        plt.close(fig)
+        for i, e in enumerate(unique):
+            mask = e["mask"].astype(np.uint8)           # (Z,Y,X)
+            bg2d = e["bg2d"]                            # (Y,X) float16
+            src  = Path(e["event_path"]).name
 
-    # === CREATE VOLUME HISTOGRAM ===
-    if dendrite_volumes:
-        plt.figure(figsize=(6, 4))
-        plt.hist(dendrite_volumes, bins=20, color='teal', edgecolor='black')
-        plt.xlabel("Dendrite Volume (µm³)")
-        plt.ylabel("Count")
-        plt.title("Dendrite Volume Distribution")
-        hist_path = OUTPUT_LABELMAP_FOLDER / "dendrite_volume_histogram.png"
-        plt.tight_layout()
-        plt.savefig(hist_path, dpi=150)
-        print(f"Volume histogram saved to: {hist_path}")
+            mask_path = OUT_LABELS / f"dend_{i:03d}_labelmap.tif"
+            bg_path   = OUT_BGS   / f"dend_{i:03d}_background_2dMIP.tif"
 
-    print("\n Module 2 complete: retained submasks of large dendrites, deduplicated, and saved.")
+            # Mask as single-object labelmap with (i+1)
+            tifffile.imwrite(mask_path, (mask * (i + 1)).astype(np.uint16))
+            # 2D background image
+            tifffile.imwrite(bg_path, bg2d, dtype=np.float16)
+
+            # Quick preview: overlay Z-MIP of mask on background
+            mip_mask = np.max(mask, axis=0).astype(bool)
+            fig, ax = plt.subplots(1, 1, figsize=(4, 4))
+            ax.imshow(bg2d.astype(np.float32), cmap="gray")
+            edges = cv2.Canny((mip_mask.astype(np.uint8) * 255), 0, 1) > 0
+            ax.imshow(np.ma.masked_where(~edges, edges), cmap="autumn", alpha=0.8)
+            ax.set_title(f"dend_{i:03d} (Z-MIP overlay)")
+            ax.axis("off")
+            fig.tight_layout()
+            fig.savefig(OUT_PREV / f"dend_{i:03d}_preview.png", dpi=150)
+            plt.close(fig)
+
+            writer.writerow({
+                "dend_id": i,
+                "labelmap_path": str(mask_path),
+                "background_path": str(bg_path),
+                "source_event_file": src,
+                "event_t_start": int(e["t_start"]),
+                "event_t_end": int(e["t_end"]),
+                "voxel_size_z": VOXEL_SIZE[0],
+                "voxel_size_y": VOXEL_SIZE[1],
+                "voxel_size_x": VOXEL_SIZE[2],
+                "volume_um3": float(e["vol"]),
+            })
+
+    print(f"Manifest saved to: {MANIFEST}")
+    print("Module 2 (original + background) complete.")
 
 if __name__ == "__main__":
     main()
