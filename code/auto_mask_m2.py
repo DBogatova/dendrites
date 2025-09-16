@@ -26,9 +26,9 @@ from skimage.measure import regionprops
 from tqdm import tqdm
 
 # ================== CONFIG ==================
-DATE = "2025-08-27"
+DATE = "2025-08-29"
 MOUSE = "rAi162_18"
-RUN = "run7"
+RUN = "run6"
 
 BASE = Path("/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025/data") / DATE / MOUSE / RUN
 EVENT_FOLDER = BASE / "preprocessed" / "event_crops"

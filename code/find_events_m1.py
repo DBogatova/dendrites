@@ -31,7 +31,7 @@ from skimage.transform import warp, AffineTransform
 import csv, gc
 
 # ------------------- CONFIG -------------------
-mpl.rcParams['font.family'] = 'CMU Serif'
+#mpl.rcParams['font.family'] = 'CMU Serif'
 
 DATE = "2025-08-27"
 MOUSE = "rAi162_18"
@@ -55,7 +55,7 @@ TIMELINE_PDF = PREPROCESSED / "activity_timeline.pdf"
 
 # Processing knobs
 Y_CROP = 3                   # crop bottom Y rows if needed
-MOTION_CORRECT = True        # rigid XY; good enough for these stacks
+MOTION_CORRECT = True        # rigid XY
 MC_REF_STRIDE = 25           # build reference from median of every Nth frame
 GAUSS_SIGMA = (0.0, 0.8, 1.0, 1.0)  # (T,Z,Y,X) — no temporal blur
 
@@ -64,8 +64,8 @@ F0_PERCENTILE = 10
 
 # Event scoring & detection
 TOP_FRAC = 0.01              # top K fraction of voxels per frame (e.g., 1%)
-Z_HI = 1.5                   # start threshold in z-scored event score
-Z_LO = 0.0                   # end threshold (hysteresis)
+Z_HI = 2.0                   # start threshold in z-scored event score
+Z_LO = 1.0                   # end threshold (hysteresis)
 BASELINE_WINDOW = 600        # frames for rolling baseline of score
 NOISE_WINDOW = 200           # frames for rolling MAD of score
 MIN_EVENT_LEN = 3

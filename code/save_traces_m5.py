@@ -28,9 +28,9 @@ mpl.rcParams['font.family'] = 'CMU Serif'
 mpl.rcParams['axes.unicode_minus'] = False  # Use standard minus sign instead of Unicode
 
 # === CONFIGURATION ===
-DATE = "2025-08-27"
+DATE = "2025-08-29"
 MOUSE = "rAi162_18"
-RUN = "run7"
+RUN = "run6"
 Y_CROP = 3
 FRAME_RATE = 10  # Frames per second
 

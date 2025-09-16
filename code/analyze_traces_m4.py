@@ -17,9 +17,9 @@ from scipy.ndimage import gaussian_filter1d
 from scipy.fft import rfft, rfftfreq
 
 # ========= CONFIG =========
-DATE  = "2025-08-27"
+DATE  = "2025-08-29"
 MOUSE = "rAi162_18"
-RUN   = "run7"
+RUN   = "run6"
 
 BASE = Path("/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025/data") / DATE / MOUSE / RUN
 TRACE_PATH = BASE / "traces" / "dff_traces_curated_bgsub.csv"
@@ -29,12 +29,12 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 CORR_THRESHOLD = 0.92
 
 # QA thresholds
-MIN_EVENT_PROM_PCT  = 0.6
-GOOD_SNR            = 6.0
-OK_SNR              = 3.5
-GOOD_SPECTRAL_RATIO = 3.0
-OK_SPECTRAL_RATIO   = 1.8
-MAX_NEG_FRAC        = 0.25
+MIN_EVENT_PROM_PCT  = 0.8
+GOOD_SNR            = 8.0
+OK_SNR              = 5.5
+GOOD_SPECTRAL_RATIO = 5.0
+OK_SPECTRAL_RATIO   = 3.8
+MAX_NEG_FRAC        = 0.2
 MAX_DRIFT_PCT       = 3.0
 
 # ==========================
