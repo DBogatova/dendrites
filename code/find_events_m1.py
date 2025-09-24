@@ -33,9 +33,9 @@ import csv, gc
 # ------------------- CONFIG -------------------
 #mpl.rcParams['font.family'] = 'CMU Serif'
 
-DATE = "2025-08-27"
-MOUSE = "rAi162_18"
-RUN = "run7"
+DATE = "2025-08-18"
+MOUSE = "rAi162_15"
+RUN = "run9"
 
 # Paths
 BASE = Path("/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025/data") / DATE / MOUSE / RUN
@@ -55,7 +55,7 @@ TIMELINE_PDF = PREPROCESSED / "activity_timeline.pdf"
 
 # Processing knobs
 Y_CROP = 3                   # crop bottom Y rows if needed
-MOTION_CORRECT = True        # rigid XY
+MOTION_CORRECT = False        # rigid XY
 MC_REF_STRIDE = 25           # build reference from median of every Nth frame
 GAUSS_SIGMA = (0.0, 0.8, 1.0, 1.0)  # (T,Z,Y,X) — no temporal blur
 
@@ -299,3 +299,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    

@@ -17,9 +17,9 @@ from scipy.ndimage import gaussian_filter1d
 from scipy.fft import rfft, rfftfreq
 
 # ========= CONFIG =========
-DATE  = "2025-08-29"
-MOUSE = "rAi162_18"
-RUN   = "run6"
+DATE  = "2025-08-18"
+MOUSE = "rAi162_15"
+RUN   = "run9"
 
 BASE = Path("/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025/data") / DATE / MOUSE / RUN
 TRACE_PATH = BASE / "traces" / "dff_traces_curated_bgsub.csv"
@@ -105,7 +105,7 @@ def main():
         feat['trace'] = name
         feat['label'] = label
         qa_rows.append(feat)
-        print(f"{name:15s}  {label}")   # <<< SIMPLE SUMMARY LINE
+        print(f"{name:15s}  {label}")
 
     qa = pd.DataFrame(qa_rows).set_index('trace')
     qa.to_csv(OUTPUT_DIR / "traces_quality.csv")

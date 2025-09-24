@@ -7,11 +7,11 @@ import imageio
 import time
 
 # === CONFIGURATION ===
-DATE = "2025-04-22"
+DATE = "2025-08-18"
 MOUSE = "rAi162_15"
-RUN = "run6"
+RUN = "run9"
 Y_CROP = 3
-VOXEL_SCALE = (4.7, 0.5, 0.6)  # (Z, Y, X) in microns
+VOXEL_SCALE = (9.4, 1.0, 1.2)  # (Z, Y, X) in microns
 
 # Specify which cells to include
 SELECTED_CELLS = [

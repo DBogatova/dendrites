@@ -5,9 +5,9 @@ from tqdm import tqdm
 import gc
 
 # === CONFIGURATION ===
-DATE = "2025-08-19"
+DATE = "2025-08-18"
 MOUSE = "rAi162_15"
-RUN = "run7"
+RUN = "run9"
 Y_CROP = 3
 FRAME_RATE = 10  # Hz
 CHUNK_DURATION = 60  # seconds per chunk
@@ -22,7 +22,7 @@ SELECTED_CELLS = [
 # === PATHS ===
 BASE = Path("/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025/data") / DATE / MOUSE / RUN
 MASK_FOLDER = BASE / "labelmaps_curated_dynamic"
-RAW_STACK_PATH = BASE / "raw" / f"runA_{RUN}_{MOUSE}_reslice_green_ok.tif"
+RAW_STACK_PATH = BASE / "raw" / f"runA_{RUN}_{MOUSE}_green_reslice.tif"
 
 def main():
     # === LOAD RAW DATA ===

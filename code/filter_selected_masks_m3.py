@@ -25,9 +25,9 @@ from scipy.spatial.distance import cdist
 import csv
 
 # ======= CONFIG =======
-DATE  = "2025-08-27"
-MOUSE = "rAi162_18"
-RUN   = "run7"
+DATE  = "2025-08-18"
+MOUSE = "rAi162_15"
+RUN   = "run9"
 
 VOXEL_SIZE = (9.4, 1.0, 1.2)  # (Z,Y,X) μm
 NEIGHBOR_K_DEFAULT = 3

@@ -26,9 +26,9 @@ from skimage.measure import regionprops
 from tqdm import tqdm
 
 # ================== CONFIG ==================
-DATE = "2025-08-29"
-MOUSE = "rAi162_18"
-RUN = "run6"
+DATE = "2025-08-18"
+MOUSE = "rAi162_15"
+RUN = "run9"
 
 BASE = Path("/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025/data") / DATE / MOUSE / RUN
 EVENT_FOLDER = BASE / "preprocessed" / "event_crops"
@@ -43,7 +43,7 @@ VOXEL_SIZE = (9.4, 1.0, 1.2)       # (Z,Y,X) μm
 VOXEL_VOL  = float(np.prod(VOXEL_SIZE))
 
 INTENSITY_PERCENTILE = 99.9        # ← your original default
-Y_CROP_BOTTOM = 3
+Y_CROP_BOTTOM = 0
 MAX_FRAME_GAP = 2
 MIN_EVENT_LENGTH = 1
 
@@ -96,8 +96,8 @@ def main():
         if extracted >= MAX_DENDRITES_TOTAL: break
 
         stack = tifffile.imread(path).astype(np.float32)  # (T,Z,Y,X)
-        if Y_CROP_BOTTOM > 0:
-            stack = stack[:, :, :-Y_CROP_BOTTOM, :]
+        #if Y_CROP_BOTTOM > 0:
+        #    stack = stack[:, :, :-Y_CROP_BOTTOM, :]
 
         T, Z, Y, X = stack.shape
         if T == 0:

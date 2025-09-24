@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 """
-Module 5D: Ca with BG subtraction (core − shell) + ACh neighborhood (no subtraction)
+Module 5D: Ca with BG subtraction (core - shell) + ACh neighborhood (no subtraction)
 
 For each curated 3D mask:
 - Load Ca (green) and ACh (red) stacks, compute ΔF/F (F0 = first 20%).
-- Ca trace: core − shell, %ΔF/F, smoothed.
+- Ca trace: core - shell, %ΔF/F, smoothed.
 - ACh traces: core, near ring, far ring (no subtraction), %ΔF/F, smoothed.
 - Exclude dead/cropped red pixels (≈zero temporal variance).
 - Optional: exclude other dendrite cores from ACh rings to avoid contamination.
