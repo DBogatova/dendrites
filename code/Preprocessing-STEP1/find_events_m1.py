@@ -64,8 +64,8 @@ F0_PERCENTILE = 10
 
 # Event scoring & detection
 TOP_FRAC = 0.01              # top K fraction of voxels per frame (e.g., 1%)
-Z_HI = 2.0                   # start threshold in z-scored event score
-Z_LO = 1.0                   # end threshold (hysteresis)
+Z_HI = 1.5                   # start threshold in z-scored event score
+Z_LO = 0.5                   # end threshold (hysteresis)
 BASELINE_WINDOW = 600        # frames for rolling baseline of score
 NOISE_WINDOW = 200           # frames for rolling MAD of score
 MIN_EVENT_LEN = 3
