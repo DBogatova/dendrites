@@ -554,7 +554,7 @@ def reviewer():
         df.to_csv(REVIEW_CSV, index=False)
         print(f"💾 Saved → {REVIEW_CSV}")
 
-    print("=== REVIEWER HOTKEYS ===")
+    print("== REVIEWER HOTKEYS ==")
     print("Left/Right: prev/next  |  1/2/3/0: set class  |  b: ΔF/F on/off  |  g: tags on/off")
     print("n: next low-quality  |  Ctrl+S: save")
 
