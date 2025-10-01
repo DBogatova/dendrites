@@ -42,7 +42,7 @@ for p in (OUT_LABELS, OUT_PREV, OUT_BGS): p.mkdir(parents=True, exist_ok=True)
 VOXEL_SIZE = (9.4, 1.0, 1.2)       # (Z,Y,X) μm
 VOXEL_VOL  = float(np.prod(VOXEL_SIZE))
 
-INTENSITY_PERCENTILE = 99.9        # ← your original default
+INTENSITY_PERCENTILE = 99.9        # global threshold for event
 Y_CROP_BOTTOM = 0
 MAX_FRAME_GAP = 2
 MIN_EVENT_LENGTH = 1

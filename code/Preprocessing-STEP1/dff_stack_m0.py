@@ -2,6 +2,7 @@
 """
 Module 0D — Build dff_stack.tif (chunked, 20th-percentile F0 via P² estimator)
 - Crops only the BOTTOM 3 pixels in Y before baseline & output.
+- Uses Zarr-backed slicing for true chunked reads of compressed TIFFs.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ import argparse
 import json
 import numpy as np
 import tifffile
+import zarr
 
 # ======= CONFIG =======
 DATE  = "2025-08-18"
@@ -19,7 +21,6 @@ RUN   = "run9"
 BASE = Path("/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025/data") / DATE / MOUSE / RUN
 RAW_IN   = BASE / "raw" / f"runA_{RUN}_{MOUSE}_green_reslice.tif"
 DFF_OUT  = BASE / "preprocessed" / f"runA_{RUN}_{MOUSE}_green_reslice_dff_stack.tif"
-META_OUT = BASE / "dff_stack_meta.json"
 
 Q = 0.20          # quantile for F0
 EPS = 1e-6        # avoid divide by zero
@@ -39,37 +40,30 @@ def open_series(path: Path):
     elif len(shape) == 4:    # (T,Z,Y,X)
         T, Z, Y, X = shape
     else:
-        tf.close(); raise ValueError(f"Unsupported TIFF shape: {shape}")
+        tf.close()
+        raise ValueError(f"Unsupported TIFF shape: {shape}")
     return tf, ser, (T, Z, Y, X), dtype
 
 def crop_y_bottom(arr: np.ndarray) -> np.ndarray:
     """Crop ONLY bottom Y_CROP_BOTTOM pixels along the Y axis."""
-    if Y_CROP_BOTTOM <= 0:
+    if Y_CROP_BOTTOM < 0:
+        raise ValueError("Y_CROP_BOTTOM must be ≥ 0")
+    if Y_CROP_BOTTOM == 0:
         return arr
     if arr.shape[-2] <= Y_CROP_BOTTOM:
         raise ValueError("Y_CROP_BOTTOM too large for array height")
     return arr[..., :-Y_CROP_BOTTOM, :]
 
 def read_time_chunk(tf: tifffile.TiffFile, t0: int, t1: int, Z: int) -> np.ndarray:
-    """Read frames [t0,t1) as (k,Z,Y,X); try memmap → full series."""
-    k = max(0, t1 - t0)
-    # Strategy 1: memmap
-    try:
-        mm = tifffile.memmap(tf.filehandle.path)
-        if mm.ndim == 4:  # (T,Z,Y,X)
-            return crop_y_bottom(np.array(mm[t0:t1]))
-        elif mm.ndim == 3:  # (T,Y,X)
-            return crop_y_bottom(np.array(mm[t0:t1][:, None, ...]))
-    except Exception:
-        pass
-    # Strategy 2: full series
-    full = tf.series[0].asarray()
-    if full.ndim == 4:
-        return crop_y_bottom(np.array(full[t0:t1]))
-    elif full.ndim == 3:
-        return crop_y_bottom(np.array(full[t0:t1][:, None, ...]))
-    else:
-        raise RuntimeError("Unsupported TIFF layout while reading")
+    """
+    Read frames [t0, t1) as (k, Z, Yc, X) without loading the whole file.
+    Uses TiffFile.series[0].aszarr() which supports slicing on compressed TIFFs.
+    """
+    store = tf.series[0].aszarr()
+    z = zarr.open(store, mode="r")            # shape (T,Z,Y,X) or (Z,Y,X)
+    arr = z if z.ndim == 4 else z[None, ...]  # ensure time axis exists
+    chunk = np.asarray(arr[t0:t1])            # materialize just this time slice
+    return crop_y_bottom(chunk)
 
 # ---------- P² estimator (per voxel, vectorized) ----------
 class P2State:
@@ -80,8 +74,7 @@ class P2State:
     def __init__(self, init5: np.ndarray, q: float):
         # init5: (5,Z,Y,X) sorted along the first axis
         self.q1, self.q2, self.q3, self.q4, self.q5 = [a.astype(np.float32) for a in init5]
-        shape = self.q1.shape
-        base = np.ones(shape, dtype=np.float32)
+        base = np.ones(self.q1.shape, dtype=np.float32)
         self.n1 = 1*base; self.n2 = 2*base; self.n3 = 3*base; self.n4 = 4*base; self.n5 = 5*base
         self.np1 = self.n1.copy(); self.np2 = self.n2.copy(); self.np3 = self.n3.copy(); self.np4 = self.n4.copy(); self.np5 = self.n5.copy()
         self.q = float(q)
@@ -152,15 +145,18 @@ class P2State:
 # ======= BADMASK =======
 
 def compute_badmask(tf: tifffile.TiffFile, T: int, Z: int) -> np.ndarray:
-    """Detect voxels that are always-zero or zero-variance using samples at t=0, mid, last (with crop)."""
+    """Keep voxels that are finite and non-constant using samples at t=0, mid, last (with crop)."""
+    picks = [0, T//2, T-1] if T >= 3 else list(range(T))
     samples = []
-    for t0 in (0, max(0, T//2 - 1), T-1):
-        arr = read_time_chunk(tf, t0, t0+1, Z)
-        samples.append(arr[0].astype(np.float32))  # (Z, Yc, X)
+    for t0 in picks:
+        arr = read_time_chunk(tf, t0, t0+1, Z)[0].astype(np.float32)  # (Z, Yc, X)
+        samples.append(arr)
     stack = np.stack(samples, axis=0)  # (S,Z,Yc,X)
-    var = stack.var(axis=0)
-    mean = stack.mean(axis=0)
-    return ~((var==0) | (mean==0))     # True = keep
+    finite = np.isfinite(stack).all(axis=0)
+    var_ok = stack.var(axis=0) > 0
+    mean_ok = stack.mean(axis=0) != 0
+    keep = finite & var_ok & mean_ok
+    return keep
 
 # ======= MAIN =======
 
@@ -172,54 +168,69 @@ def main():
     ap.add_argument('--chunk', type=int, default=CHUNK_T)
     args = ap.parse_args()
 
-    tf, ser, (T,Z,Y,X), dtype = open_series(args.in_path)
-    print(f"Loaded raw header: (T,Z,Y,X)=({T},{Z},{Y},{X}) dtype={dtype}")
-    print(f"✂️ Cropping bottom Y: {Y} → {Y - Y_CROP_BOTTOM}")
+    with tifffile.TiffFile(str(args.in_path)) as tf:
+        ser = tf.series[0]
+        shape = ser.shape
+        if len(shape) == 3:
+            T = 1; Z, Y, X = shape
+        elif len(shape) == 4:
+            T, Z, Y, X = shape
+        else:
+            raise ValueError(f"Unsupported TIFF shape: {shape}")
 
-    keepmask = compute_badmask(tf, T, Z)  # with crop applied inside read_time_chunk
+        print(f"Loaded raw header: (T,Z,Y,X)=({T},{Z},{Y},{X}) dtype={ser.dtype}")
+        print(f"✂️ Cropping bottom Y: {Y} → {Y - Y_CROP_BOTTOM}")
 
-    # ----- Pass 1: P² init with first up-to-5 frames -----
-    init_frames = min(5, T)
-    init = read_time_chunk(tf, 0, init_frames, Z).astype(np.float32)
-    if init.ndim == 3:
-        init = init[None]
-    pad_needed = 5 - init.shape[0]
-    if pad_needed > 0:
-        pad = np.repeat(init[-1:,...], pad_needed, axis=0)
-        init = np.concatenate([init, pad], axis=0)
-    init_sorted = np.sort(init, axis=0)
-    p2 = P2State(init_sorted[:5], q=Q)
+        keepmask = compute_badmask(tf, T, Z)  # with crop applied inside read_time_chunk
 
-    # streaming update
-    for t0 in range(init_frames, T, args.chunk):
-        t1 = min(T, t0+args.chunk)
-        chunk = read_time_chunk(tf, t0, t1, Z).astype(np.float32)
-        for k in range(chunk.shape[0]):
-            x = np.where(keepmask, chunk[k], 0.0)
-            p2.update_batch(x)
-        print(f"P² pass: processed frames {t0}..{t1-1}")
+        # ----- Pass 1: P² init with first up-to-5 frames -----
+        init_frames = min(5, T)
+        init = read_time_chunk(tf, 0, init_frames, Z).astype(np.float32)  # (k,Z,Yc,X)
+        if init.ndim == 3:
+            init = init[None]
+        pad_needed = 5 - init.shape[0]
+        if pad_needed > 0:
+            pad = np.repeat(init[-1:,...], pad_needed, axis=0)
+            init = np.concatenate([init, pad], axis=0)
+        init_sorted = np.sort(init, axis=0)
+        p2 = P2State(init_sorted[:5], q=Q)
 
-    f0 = np.where(keepmask, p2.f0(), 0.0)   # (Z, Yc, X)
+        # Streaming update
+        for t0 in range(init_frames, T, args.chunk):
+            t1 = min(T, t0 + args.chunk)
+            chunk = read_time_chunk(tf, t0, t1, Z).astype(np.float32)
+            for k in range(chunk.shape[0]):
+                x = np.where(keepmask, chunk[k], 0.0)
+                p2.update_batch(x)
+            print(f"P² pass: processed frames {t0}..{t1-1}")
 
-    # ----- Pass 2: write ΔF/F in chunks -----
-    args.out_path.parent.mkdir(parents=True, exist_ok=True)
-    first = True
-    for t0 in range(0, T, args.chunk):
-        t1 = min(T, t0+args.chunk)
-        raw_chunk = read_time_chunk(tf, t0, t1, Z).astype(np.float32)  # (k,Z,Yc,X)
-        dff_chunk = np.where(keepmask[None], (raw_chunk - f0)/(f0+args.eps), 0.0).astype(np.float32)
-        tifffile.imwrite(
-            str(args.out_path),
-            dff_chunk,
-            imagej=False,
-            append=not first,
-            bigtiff=True,
-            compression='zlib'
-        )
-        first = False
-        print(f"Wrote frames {t0}..{t1-1} → {args.out_path}")
+        f0 = np.where(keepmask, p2.f0(), 0.0)   # (Z, Yc, X)
 
-    # Meta
+        # ----- Pass 2: write ΔF/F in chunks -----
+        args.out_path.parent.mkdir(parents=True, exist_ok=True)
+        first = True
+        for t0 in range(0, T, args.chunk):
+            t1 = min(T, t0 + args.chunk)
+            raw_chunk = read_time_chunk(tf, t0, t1, Z).astype(np.float32)  # (k,Z,Yc,X)
+
+            # In-place ΔF/F to minimize allocations
+            np.subtract(raw_chunk, f0, out=raw_chunk)
+            np.divide(raw_chunk, (f0 + args.eps), out=raw_chunk)
+            raw_chunk[:, ~keepmask] = 0.0
+            dff_chunk = raw_chunk  # alias
+
+            tifffile.imwrite(
+                str(args.out_path),
+                dff_chunk,
+                imagej=False,
+                append=not first,
+                bigtiff=True,
+                compression='zlib'
+            )
+            first = False
+            print(f"Wrote frames {t0}..{t1-1} → {args.out_path}")
+
+    # Meta written next to output
     Yc = int(Y - Y_CROP_BOTTOM)
     meta = {
         "input": str(args.in_path),
@@ -232,9 +243,10 @@ def main():
         "y_crop_top": 0,
         "y_crop_bottom": int(Y_CROP_BOTTOM)
     }
-    with open(META_OUT, 'w') as f:
+    meta_out = args.out_path.with_suffix("").with_name(args.out_path.stem + "_meta.json")
+    with open(meta_out, 'w') as f:
         json.dump(meta, f, indent=2)
-    print(f"📝 Meta → {META_OUT}")
+    print(f"📝 Meta → {meta_out}")
 
 if __name__ == "__main__":
     main()
