@@ -1,50 +1,34 @@
 #!/usr/bin/env python
 """
-Module 1 (robust ΔF/F + motion correction + event windows)
+Module 1 (robust ΔF/F + motion correction + event windows) - Memory Optimized
 
-What's different (to help Module 2):
-- No min-max normalization; no frame-mean subtraction (keeps real amplitudes).
-- Optional rigid XY motion correction (fast).
-- Compute per-voxel baseline F0 (10th percentile) and ΔF/F.
-- Robust event score per frame: mean of top K% ΔF/F voxels (not spatial max).
-- Save ΔF/F stack, a 2D tissue mask, per-event ΔF/F crops, and per-event 2D Z-MIP tmax backgrounds.
-- events_summary.csv (event_id, t_start, t_end, peak_frame, score_peak).
-
-Outputs (all under .../<DATE>/<MOUSE>/<RUN>/preprocessed):
-- dff_stack.tif                      (float32, T,Z,Y,X)
-- tissue_mask_2d.npy                 (bool, Y,X)
-- events_summary.csv / events_peak_frames.npy
-- event_crops/event_group_XXXX_peakNNNN.tif        (ΔF/F crops, float32)
-- event_crops_bg/event_group_XXXX_peakNNNN_bg.tif  (2D background, float16)
-- activity_timeline.pdf
+Memory-optimized version that processes data in chunks to avoid OOM errors.
+Does exactly the same as find_events_m1_fixed.py but uses chunked processing.
 """
 
 from pathlib import Path
 import numpy as np
 import tifffile
+import matplotlib
+matplotlib.use('Agg')  # Non-interactive backend
 import matplotlib.pyplot as plt
-import matplotlib as mpl
 from scipy.ndimage import gaussian_filter
 from skimage.filters import threshold_otsu
-from skimage.registration import phase_cross_correlation
-from skimage.transform import warp, AffineTransform
 import csv, gc
 
 # ------------------- CONFIG -------------------
-#mpl.rcParams['font.family'] = 'CMU Serif'
 
-DATE = "2025-08-18"
+DATE = "2025-10-03"
 MOUSE = "rAi162_15"
-RUN = "run9"
+RUN = "run7"
 
 # Paths
 BASE = Path("/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025/data") / DATE / MOUSE / RUN
-RAW_STACK_PATH = BASE / "raw" / f"runA_{RUN}_{MOUSE}_green_reslice.tif"
+RAW_STACK_PATH = BASE / "raw" / f"runA_{RUN}_{MOUSE}_v1_reslice.tif"
 PREPROCESSED = BASE / "preprocessed"
 PREPROCESSED.mkdir(exist_ok=True)
 EVENT_CROPS = PREPROCESSED / "event_crops"; EVENT_CROPS.mkdir(exist_ok=True)
 EVENT_CROPS_BG = PREPROCESSED / "event_crops_bg"; EVENT_CROPS_BG.mkdir(exist_ok=True)
-PREVIEWS = PREPROCESSED / "active_frame_previews"; PREVIEWS.mkdir(exist_ok=True)
 
 # Outputs
 DFF_STACK_PATH = PREPROCESSED / "dff_stack.tif"
@@ -54,29 +38,21 @@ EVENTS_PEAKS_NPY = PREPROCESSED / "events_peak_frames.npy"
 TIMELINE_PDF = PREPROCESSED / "activity_timeline.pdf"
 
 # Processing knobs
-Y_CROP = 3                   # crop bottom Y rows if needed
-MOTION_CORRECT = False        # rigid XY (disabled for memory efficiency)
-MC_REF_STRIDE = 25           # build reference from median of every Nth frame
-GAUSS_SIGMA = (0.0, 0.8, 1.0, 1.0)  # (T,Z,Y,X) — no temporal blur
-
-# ΔF/F baseline
+RECOMPUTE_DFF = True        # Set to True to recompute ΔF/F stack
+Y_CROP = 3
+GAUSS_SIGMA = (0.0, 0.8, 1.0, 1.0)  # (T,Z,Y,X)
 F0_PERCENTILE = 10
-
-# Event scoring & detection
-TOP_FRAC = 0.01              # top K fraction of voxels per frame (e.g., 1%)
-Z_HI = 1.5                   # start threshold in z-scored event score
-Z_LO = 0.5                   # end threshold (hysteresis)
-BASELINE_WINDOW = 600        # frames for rolling baseline of score
-NOISE_WINDOW = 200           # frames for rolling MAD of score
+TOP_FRAC = 0.01
+Z_HI = 1.5
+Z_LO = 0.5
+BASELINE_WINDOW = 600
+NOISE_WINDOW = 200
 MIN_EVENT_LEN = 3
 MAX_FRAME_GAP = 2
-CROP_RADIUS = 5              # frames before/after group when saving crops
-
-# Tissue mask
+CROP_RADIUS = 5
 TISSUE_BLUR_SIGMA = 1.0
-TISSUE_PERC = None           # if None → Otsu; else integer percentile (e.g., 70)
-TISSUE_MIN_AREA = 800        # pixels in 2D
-# ---------------------------------------------
+TISSUE_PERC = None
+TISSUE_MIN_AREA = 800
 
 def group_consecutive(frames, gap=1):
     if len(frames) == 0: return []
@@ -88,51 +64,6 @@ def group_consecutive(frames, gap=1):
         else: groups.append(cur); cur = [f]
     groups.append(cur)
     return groups
-
-def build_tissue_mask(stack_TZYX):
-    """2D mask from time-mean Z-MIP, with simple closing + island filter."""
-    mean_2d = stack_TZYX.mean(axis=0).max(axis=0).astype(np.float32)
-    img = gaussian_filter(mean_2d, TISSUE_BLUR_SIGMA)
-    if TISSUE_PERC is None:
-        thr = threshold_otsu(img)
-    else:
-        thr = np.percentile(img, TISSUE_PERC)
-    m = img > thr
-    # simple close by gaussian then threshold already smooths; remove small islands
-    from skimage.morphology import label
-    lbl = label(m)
-    keep = np.zeros_like(m, bool)
-    for i in range(1, int(lbl.max()) + 1):
-        rr = (lbl == i)
-        if rr.sum() >= TISSUE_MIN_AREA:
-            keep |= rr
-    return keep
-
-def rigid_xy_motion_correct(stack_TZYX):
-    """
-    Rigid XY registration per frame to a reference (median of sparse frames).
-    Uses phase_cross_correlation on a Z-MIP for speed, applies same shift to all Z slices.
-    Returns corrected stack and the per-frame shifts (dy, dx).
-    """
-    T, Z, Y, X = stack_TZYX.shape
-    # Build reference from median of a subset of frames (using Z-MIPs)
-    idx = np.arange(0, T, max(1, MC_REF_STRIDE))
-    ref = np.median(stack_TZYX[idx].max(axis=1), axis=0).astype(np.float32)  # (Y,X)
-
-    corrected = np.empty_like(stack_TZYX, dtype=np.float32)
-    shifts = np.zeros((T, 2), dtype=np.float32)
-
-    for t in range(T):
-        mov = stack_TZYX[t].max(axis=0).astype(np.float32)  # (Y,X)
-        shift, _, _ = phase_cross_correlation(ref, mov, upsample_factor=10)
-        dy, dx = -shift[0], -shift[1]  # skimage returns (y,x) shift to apply to mov -> ref
-        shifts[t] = (dy, dx)
-        # Apply to all Z slices with a single Affine (translation)
-        tf = AffineTransform(translation=(dx, dy))
-        for z in range(Z):
-            corrected[t, z] = warp(stack_TZYX[t, z], tf, order=1, preserve_range=True).astype(np.float32)
-
-    return corrected, shifts
 
 def rolling_baseline_percentile(x, win, pct):
     pad = win // 2
@@ -163,119 +94,189 @@ def main():
     print(f"Shape: T={T}, Z={Z}, Y={Y}, X={X}")
     print(f"Estimated memory: {T*Z*Y*X*4/1e9:.1f} GB")
 
-    # ---- COMPUTE F0 IN CHUNKS ----
-    print("Computing F0 baseline in chunks...")
-    chunk_size = min(50, T)  # Process 50 frames at a time
-    F0 = None
-    
-    # Collect samples for percentile calculation
-    samples = []
-    n_samples = min(T, 200)  # Sample 200 frames max
-    sample_indices = np.linspace(0, T-1, n_samples, dtype=int)
-    
-    with tifffile.TiffFile(RAW_STACK_PATH) as tif:
-        for i in sample_indices:
-            frame = tif.series[0].asarray()[i].astype(np.float32)
-            if Y_CROP > 0:
-                frame = frame[:, :-Y_CROP, :]
-            samples.append(frame)
-            if len(samples) % 20 == 0:
-                print(f"  Sampled {len(samples)}/{n_samples} frames")
-    
-    # Compute F0 from samples
-    sample_stack = np.stack(samples, axis=0)
-    F0 = np.percentile(sample_stack, F0_PERCENTILE, axis=0)
-    del samples, sample_stack
-    gc.collect()
-    
-    # ---- PROCESS ΔF/F AND BUILD TISSUE MASK IN CHUNKS ----
-    print("Processing ΔF/F in chunks...")
-    
-    # Initialize outputs
-    scores = np.zeros(T, dtype=np.float32)
-    tissue_accumulator = np.zeros((Y, X), dtype=np.float32)
-    
-    # Create output file for ΔF/F stack
-    dff_writer = tifffile.TiffWriter(DFF_STACK_PATH)
-    
-    with tifffile.TiffFile(RAW_STACK_PATH) as tif:
-        for t_start in range(0, T, chunk_size):
-            t_end = min(t_start + chunk_size, T)
-            print(f"  Processing frames {t_start}-{t_end-1}/{T}")
-            
-            # Load chunk
-            chunk = tif.series[0].asarray()[t_start:t_end].astype(np.float32)
-            if Y_CROP > 0:
-                chunk = chunk[:, :, :-Y_CROP, :]
-            
-            # Compute ΔF/F for chunk
-            dff_chunk = (chunk - F0[None]) / (F0 + 1e-6)
-            
-            # Apply smoothing
-            if any(s > 0 for s in GAUSS_SIGMA):
-                dff_chunk = gaussian_filter(dff_chunk, sigma=GAUSS_SIGMA)
-            
-            # Accumulate for tissue mask (time-mean Z-MIP)
-            chunk_mip = dff_chunk.mean(axis=0).max(axis=0)
-            tissue_accumulator += chunk_mip * (t_end - t_start) / T
-            
-            # Save ΔF/F chunk
-            for t_rel in range(dff_chunk.shape[0]):
-                dff_writer.write(dff_chunk[t_rel].astype(np.float32))
-            
-            del chunk, dff_chunk, chunk_mip
-            gc.collect()
-    
-    dff_writer.close()
-    print(f"Saved ΔF/F stack to {DFF_STACK_PATH}")
-    
-    # ---- BUILD TISSUE MASK ----
-    print("Building tissue mask...")
-    img = gaussian_filter(tissue_accumulator, TISSUE_BLUR_SIGMA)
-    if TISSUE_PERC is None:
-        thr = threshold_otsu(img)
+    # ---- COMPUTE OR LOAD ΔF/F STACK ----
+    if RECOMPUTE_DFF or not DFF_STACK_PATH.exists():
+        print("Computing F0 baseline in chunks...")
+        chunk_size = min(50, T)
+        
+        # Collect samples for F0 calculation
+        samples = []
+        n_samples = min(T, 200)
+        sample_indices = np.linspace(0, T-1, n_samples, dtype=int)
+        
+        with tifffile.TiffFile(RAW_STACK_PATH) as tif:
+            for i in sample_indices:
+                frame = tif.series[0].asarray()[i].astype(np.float32)
+                if Y_CROP > 0:
+                    frame = frame[:, :-Y_CROP, :]
+                samples.append(frame)
+                if len(samples) % 20 == 0:
+                    print(f"  Sampled {len(samples)}/{n_samples} frames")
+        
+        # Compute F0 from samples
+        sample_stack = np.stack(samples, axis=0)
+        F0 = np.percentile(sample_stack, F0_PERCENTILE, axis=0)
+        del samples, sample_stack
+        gc.collect()
+        
+        # ---- PROCESS ΔF/F IN CHUNKS ----
+        print("Processing ΔF/F in chunks...")
+        
+        # Initialize outputs
+        tissue_accumulator = np.zeros((Y, X), dtype=np.float32)
+        
+        # Process and save ΔF/F stack
+        with tifffile.TiffWriter(DFF_STACK_PATH, bigtiff=True) as dff_writer:
+            with tifffile.TiffFile(RAW_STACK_PATH) as tif:
+                for t_start in range(0, T, chunk_size):
+                    t_end = min(t_start + chunk_size, T)
+                    print(f"  Processing frames {t_start}-{t_end-1}/{T}")
+                    
+                    # Load chunk
+                    chunk = tif.series[0].asarray()[t_start:t_end].astype(np.float32)
+                    if Y_CROP > 0:
+                        chunk = chunk[:, :, :-Y_CROP, :]
+                    
+                    # Compute ΔF/F for chunk
+                    dff_chunk = (chunk - F0[None]) / (F0 + 1e-6)
+                    
+                    # Apply smoothing
+                    if any(s > 0 for s in GAUSS_SIGMA):
+                        dff_chunk = gaussian_filter(dff_chunk, sigma=GAUSS_SIGMA)
+                    
+                    # Accumulate for tissue mask (time-mean Z-MIP)
+                    chunk_mip = dff_chunk.mean(axis=0).max(axis=0)
+                    tissue_accumulator += chunk_mip * (t_end - t_start) / T
+                    
+                    # Save ΔF/F chunk
+                    for t_rel in range(dff_chunk.shape[0]):
+                        dff_writer.write(dff_chunk[t_rel].astype(np.float32))
+                    
+                    del chunk, dff_chunk, chunk_mip
+                    gc.collect()
+        
+        print(f"Saved ΔF/F stack to {DFF_STACK_PATH}")
+        
+        # ---- BUILD TISSUE MASK ----
+        print("Building tissue mask...")
+        img = gaussian_filter(tissue_accumulator, TISSUE_BLUR_SIGMA)
+        if TISSUE_PERC is None:
+            thr = threshold_otsu(img)
+        else:
+            thr = np.percentile(img, TISSUE_PERC)
+        tissue2d = img > thr
+        
+        # Remove small islands
+        from skimage.morphology import label
+        lbl = label(tissue2d)
+        keep = np.zeros_like(tissue2d, bool)
+        for i in range(1, int(lbl.max()) + 1):
+            rr = (lbl == i)
+            if rr.sum() >= TISSUE_MIN_AREA:
+                keep |= rr
+        tissue2d = keep
+        np.save(TISSUE_MASK_PATH, tissue2d)
     else:
-        thr = np.percentile(img, TISSUE_PERC)
-    tissue2d = img > thr
-    
-    # Remove small islands
-    from skimage.morphology import label
-    lbl = label(tissue2d)
-    keep = np.zeros_like(tissue2d, bool)
-    for i in range(1, int(lbl.max()) + 1):
-        rr = (lbl == i)
-        if rr.sum() >= TISSUE_MIN_AREA:
-            keep |= rr
-    tissue2d = keep
-    np.save(TISSUE_MASK_PATH, tissue2d)
+        print(f"Using existing ΔF/F stack: {DFF_STACK_PATH}")
+        if TISSUE_MASK_PATH.exists():
+            tissue2d = np.load(TISSUE_MASK_PATH)
+            print(f"Loaded existing tissue mask: {tissue2d.shape}")
+        else:
+            print("Tissue mask not found, creating from existing ΔF/F...")
+            # Build tissue mask from existing ΔF/F
+            tissue_accumulator = np.zeros((Y, X), dtype=np.float32)
+            with tifffile.TiffFile(DFF_STACK_PATH) as tif:
+                n_frames = len(tif.pages)
+                for t in range(0, min(n_frames, 100), 10):  # Sample every 10th frame
+                    frame = tif.pages[t].asarray()
+                    mip = frame.max(axis=0)
+                    tissue_accumulator += mip / min(n_frames//10, 10)
+            
+            img = gaussian_filter(tissue_accumulator, TISSUE_BLUR_SIGMA)
+            if TISSUE_PERC is None:
+                thr = threshold_otsu(img)
+            else:
+                thr = np.percentile(img, TISSUE_PERC)
+            tissue2d = img > thr
+            
+            from skimage.morphology import label
+            lbl = label(tissue2d)
+            keep = np.zeros_like(tissue2d, bool)
+            for i in range(1, int(lbl.max()) + 1):
+                rr = (lbl == i)
+                if rr.sum() >= TISSUE_MIN_AREA:
+                    keep |= rr
+            tissue2d = keep
+            np.save(TISSUE_MASK_PATH, tissue2d)
     
     # ---- COMPUTE FRAME SCORES FROM SAVED ΔF/F ----
-    print("Computing frame scores from saved ΔF/F...")
+    print("Computing robust frame scores...")
+    scores = np.zeros(T, dtype=np.float32)
     K = max(1, int(TOP_FRAC * np.count_nonzero(tissue2d)))
-    mask3d = np.repeat(tissue2d[None, :, :], Z, axis=0)
-    flat_idx = np.where(mask3d.ravel())[0]
     
     with tifffile.TiffFile(DFF_STACK_PATH) as tif:
+        # Check if we have the expected number of pages (T*Z)
+        total_pages = len(tif.pages)
+        expected_pages = T * Z
+        print(f"Total pages: {total_pages}, Expected: {expected_pages}")
+        
+        # Get frame dimensions - each page should be (Y,X)
+        first_frame = tif.pages[0].asarray()
+        if len(first_frame.shape) == 2:
+            dff_Y, dff_X = first_frame.shape
+            dff_Z = Z  # Use original Z dimension
+        else:
+            dff_Z, dff_Y, dff_X = first_frame.shape
+        
+        print(f"ΔF/F page shape: {first_frame.shape}, tissue mask shape: {tissue2d.shape}")
+        
+        # Ensure tissue mask matches ΔF/F dimensions
+        if tissue2d.shape != (dff_Y, dff_X):
+            print(f"Resizing tissue mask from {tissue2d.shape} to ({dff_Y}, {dff_X})")
+            from skimage.transform import resize
+            tissue2d = resize(tissue2d, (dff_Y, dff_X), order=0, preserve_range=True).astype(bool)
+        
+        # Create 3D mask
+        mask3d = np.repeat(tissue2d[None, :, :], dff_Z, axis=0)
+        flat_idx = np.where(mask3d.ravel())[0]
+        
         for t in range(T):
-            vol = tif.series[0].asarray()[t].reshape(-1)
-            vals = vol[flat_idx]
-            if vals.size == 0:
-                scores[t] = 0.0
+            # Reconstruct 3D volume from Z pages
+            vol_3d = []
+            for z in range(dff_Z):
+                page_idx = t * dff_Z + z
+                if page_idx < total_pages:
+                    page = tif.pages[page_idx].asarray()
+                    vol_3d.append(page)
+                else:
+                    # Fill missing pages with zeros
+                    vol_3d.append(np.zeros((dff_Y, dff_X), dtype=np.float32))
+            
+            if vol_3d:
+                vol = np.stack(vol_3d, axis=0).reshape(-1)  # (Z,Y,X) -> flat
+                # Ensure indices are within bounds
+                valid_idx = flat_idx[flat_idx < vol.size]
+                vals = vol[valid_idx]
+                
+                if vals.size == 0:
+                    scores[t] = 0.0
+                else:
+                    topk = np.partition(vals, -min(K, vals.size))[-min(K, vals.size):]
+                    scores[t] = float(np.mean(topk))
             else:
-                topk = np.partition(vals, -K)[-K:]
-                scores[t] = float(np.mean(topk))
+                scores[t] = 0.0
             
             if t % 100 == 0:
                 print(f"  Processed {t+1}/{T} frames")
 
-    # ---- detrend scores with rolling baseline + MAD z-score ----
+    # ---- DETREND SCORES AND DETECT EVENTS ----
     print("Detrending score and detecting events...")
     base = rolling_baseline_percentile(scores, BASELINE_WINDOW, pct=F0_PERCENTILE)
     resid = (scores - base)
     mad = rolling_mad(resid, NOISE_WINDOW) + 1e-6
     z = resid / (1.4826 * mad)
 
-    # hysteresis on z
+    # Hysteresis on z
     active = []
     in_evt = False; st = None
     for i, zi in enumerate(z):
@@ -289,84 +290,16 @@ def main():
         active.extend(range(st, T))
     active = np.array(sorted(set(active)), dtype=int)
 
-    # group into events
+    # Group into events
     groups = group_consecutive(active, gap=MAX_FRAME_GAP)
     print(f"Detected {len(active)} active frames, grouped into {len(groups)} events.")
 
-    # ---- SAVE EVENT CROPS FROM ΔF/F STACK ----
-    print("Saving event crops...")
-    events_data = []
-    
-    with tifffile.TiffFile(DFF_STACK_PATH) as tif:
-        for i, group in enumerate(groups):
-            peak_t = group[np.argmax([scores[t] for t in group])]
-            t_start = max(0, group[0] - CROP_RADIUS)
-            t_end = min(T, group[-1] + CROP_RADIUS + 1)
-            
-            # Load crop from saved ΔF/F
-            crop = tif.series[0].asarray()[t_start:t_end]
-            
-            # Save crop
-            crop_name = f"event_group_{i:04d}_peak{peak_t:04d}.tif"
-            tifffile.imwrite(EVENT_CROPS / crop_name, crop.astype(np.float32))
-            
-            # Create 2D background (Z-MIP time-max)
-            bg_2d = crop.max(axis=(0, 1)).astype(np.float16)
-            bg_name = f"event_group_{i:04d}_peak{peak_t:04d}_bg.tif"
-            tifffile.imwrite(EVENT_CROPS_BG / bg_name, bg_2d)
-            
-            events_data.append({
-                'event_id': i,
-                't_start': group[0],
-                't_end': group[-1],
-                'peak_frame': peak_t,
-                'score_peak': scores[peak_t]
-            })
-    
-    # Save events summary
-    with open(EVENTS_CSV_PATH, 'w', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=['event_id', 't_start', 't_end', 'peak_frame', 'score_peak'])
-        writer.writeheader()
-        writer.writerows(events_data)
-    
-    peak_frames = [e['peak_frame'] for e in events_data]
-    np.save(EVENTS_PEAKS_NPY, peak_frames)
-    
-    # ---- timeline plot ----
+    # ---- TIMELINE PLOT ----
     print("Saving activity timeline...")
     fig, ax = plt.subplots(3, 1, figsize=(12, 9), sharex=True)
     ax[0].plot(scores, label="Top-K mean ΔF/F", color="black")
     ax[0].plot(base, label="Rolling baseline", color="orange")
-    ax[0].set_ylabel("ΔF/F")
-    ax[0].set_title("Event Detection")
-    
-    ax[1].plot(resid, label="Detrended", color="blue")
-    ax[1].set_ylabel("Residual")
-    ax[1].legend()
-    
-    ax[2].plot(z, label="Z-score", color="purple")
-    ax[2].axhline(Z_HI, color='red', linestyle='--', label=f'Start ({Z_HI})')
-    ax[2].axhline(Z_LO, color='orange', linestyle='--', label=f'End ({Z_LO})')
-    if len(active) > 0:
-        ax[2].scatter(active, z[active], color='red', s=1, alpha=0.7)
-    ax[2].set_xlabel("Frame")
-    ax[2].set_ylabel("Z-score")
-    ax[2].legend()
-    
-    plt.tight_layout()
-    plt.savefig(TIMELINE_PDF, dpi=200, bbox_inches='tight')
-    plt.close()
-    
-    print(f"\nSummary:")
-    print(f"  Detected {len(groups)} events from {len(active)} active frames")
-    print(f"  ΔF/F stack: {DFF_STACK_PATH}")
-    print(f"  Tissue mask: {TISSUE_MASK_PATH}")
-    print(f"  Events: {EVENTS_CSV_PATH}")
-    print(f"  Event crops: {EVENT_CROPS}/")
-    print("Done.")
-
-if __name__ == "__main__":
-    main()
+    ax[0].legend(); ax[0].set_ylabel("Score")
 
     ax[1].plot(resid, label="Score - baseline", color="green")
     ax[1].axhline(0, color='k', alpha=0.3)
@@ -380,46 +313,60 @@ if __name__ == "__main__":
     ax[2].legend(); ax[2].set_xlabel("Frame"); ax[2].set_ylabel("z")
     plt.tight_layout(); plt.savefig(TIMELINE_PDF, format="pdf"); plt.close()
 
-    # ---- summarize & save events + crops (ΔF/F) + 2D backgrounds ----
+    # ---- SAVE EVENT CROPS FROM SAVED ΔF/F ----
     print("Summarizing and saving event crops...")
     rows = []; peak_frames = []
-    T_, Z_, Y_, X_ = dff.shape
+    
+    with tifffile.TiffFile(DFF_STACK_PATH) as tif:
+        for i, g in enumerate(groups):
+            t_start = max(0, g[0] - CROP_RADIUS)
+            t_end = min(T, g[-1] + CROP_RADIUS + 1)
 
-    for i, g in enumerate(groups):
-        t_start = max(0, g[0] - CROP_RADIUS)
-        t_end   = min(T_, g[-1] + CROP_RADIUS + 1)
+            # Peak frame by z-score within this event
+            gi = np.array(g, dtype=int)
+            local_peak_idx = int(np.argmax(z[gi]))
+            peak_frame = int(gi[local_peak_idx])
 
-        # peak frame by z-score within this event
-        gi = np.array(g, dtype=int)
-        local_peak_idx = int(np.argmax(z[gi]))
-        peak_frame = int(gi[local_peak_idx])
+            # Load crop from saved ΔF/F - reconstruct (T,Z,Y,X) structure
+            crop_frames = []
+            for t in range(t_start, t_end):
+                # Reconstruct 3D volume from Z pages for this timepoint
+                vol_3d = []
+                for z_idx in range(Z):
+                    page_idx = t * Z + z_idx
+                    if page_idx < total_pages:
+                        page = tif.pages[page_idx].asarray()
+                        vol_3d.append(page)
+                    else:
+                        vol_3d.append(np.zeros((dff_Y, dff_X), dtype=np.float32))
+                
+                if vol_3d:
+                    vol = np.stack(vol_3d, axis=0)  # (Z,Y,X)
+                    crop_frames.append(vol)
+            
+            if crop_frames:
+                crop = np.stack(crop_frames, axis=0).astype(np.float32)  # (T,Z,Y,X)
+            else:
+                continue  # Skip if no valid frames
 
-        # Save ΔF/F crop for Module 2 (don’t over-normalize)
-        crop = dff[t_start:t_end].astype(np.float32)
-        out_name = f"event_group_{i:04d}_peak{peak_frame}.tif"
-        tifffile.imwrite(EVENT_CROPS / out_name, crop)
+            # Save ΔF/F crop
+            out_name = f"event_group_{i:04d}_peak{peak_frame}.tif"
+            tifffile.imwrite(EVENT_CROPS / out_name, crop)
 
-        # Save lightweight 2D background (Z-MIP of time-max in the same window)
-        vol_tmax = np.max(crop, axis=0)                      # (Z,Y,X)
-        bg2d = np.max(vol_tmax, axis=0).astype(np.float16)   # (Y,X)
-        tifffile.imwrite(EVENT_CROPS_BG / out_name.replace(".tif", "_bg.tif"), bg2d, dtype=np.float16)
+            # Save 2D background (Z-MIP of time-max)
+            vol_tmax = np.max(crop, axis=0)                      # (Z,Y,X)
+            bg2d = np.max(vol_tmax, axis=0).astype(np.float16)   # (Y,X)
+            tifffile.imwrite(EVENT_CROPS_BG / out_name.replace(".tif", "_bg.tif"), bg2d, dtype=np.float16)
 
-        rows.append({"event_id": i, "t_start": int(t_start), "t_end": int(t_end-1),
-                     "peak_frame": int(peak_frame), "score_peak": float(scores[peak_frame])})
-        peak_frames.append(peak_frame)
-
-    # Save ΔF/F stack (optional but helpful for later QC)
-    print("Saving ΔF/F stack (float32)...")
-    tifffile.imwrite(DFF_STACK_PATH, dff.astype(np.float32))
+            rows.append({"event_id": i, "t_start": int(t_start), "t_end": int(t_end-1),
+                         "peak_frame": int(peak_frame), "score_peak": float(scores[peak_frame])})
+            peak_frames.append(peak_frame)
 
     # Save event tables
     with open(EVENTS_CSV_PATH, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=["event_id", "t_start", "t_end", "peak_frame", "score_peak"])
         w.writeheader(); w.writerows(rows)
     np.save(EVENTS_PEAKS_NPY, np.array(peak_frames, dtype=np.int32))
-
-    # cleanup
-    del dff; gc.collect()
 
     # Quick stdout summary
     if rows:
@@ -432,4 +379,3 @@ if __name__ == "__main__":
 
 if __name__ == "__main__":
     main()
-    

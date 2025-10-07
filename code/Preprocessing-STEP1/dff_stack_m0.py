@@ -14,13 +14,13 @@ import tifffile
 import zarr
 
 # ======= CONFIG =======
-DATE  = "2025-08-18"
+DATE  = "2025-10-03"
 MOUSE = "rAi162_15"
-RUN   = "run9"
+RUN   = "run7"
 
 BASE = Path("/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025/data") / DATE / MOUSE / RUN
-RAW_IN   = BASE / "raw" / f"runA_{RUN}_{MOUSE}_green_reslice.tif"
-DFF_OUT  = BASE / "preprocessed" / f"runA_{RUN}_{MOUSE}_green_reslice_dff_stack.tif"
+RAW_IN   = BASE / "raw" / f"runA_{RUN}_{MOUSE}_v1_reslice.tif"
+DFF_OUT  = BASE / "preprocessed" / f"runA_{RUN}_{MOUSE}_v1_reslice_dff_stack.tif"
 
 Q = 0.20          # quantile for F0
 EPS = 1e-6        # avoid divide by zero
