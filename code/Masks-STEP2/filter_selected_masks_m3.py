@@ -25,9 +25,9 @@ from scipy.spatial.distance import cdist
 import csv
 
 # ======= CONFIG =======
-DATE  = "2025-08-18"
-MOUSE = "rAi162_15"
-RUN   = "run9"
+DATE  = "2025-08-06"
+MOUSE = "organoid"
+RUN   = "run8"
 
 VOXEL_SIZE = (9.4, 1.0, 1.2)  # (Z,Y,X) μm
 NEIGHBOR_K_DEFAULT = 3
@@ -279,18 +279,20 @@ def main():
         print(f"➖ SUBTRACT neighbor#{n} ({names[j]}) from {names[i]}")
         refresh_scene()
 
-    @v.bind_key("1")
+    # Merge neighbors with q/w/r keys
+    @v.bind_key("q")
     def _merge_n1(viewer): merge_neighbor(1)
-    @v.bind_key("2")
+    @v.bind_key("w")
     def _merge_n2(viewer): merge_neighbor(2)
-    @v.bind_key("3")
+    @v.bind_key("r")
     def _merge_n3(viewer): merge_neighbor(3)
 
-    @v.bind_key("Shift-1")
+    # Subtract neighbors with a/s/f keys
+    @v.bind_key("a")
     def _sub_n1(viewer): subtract_neighbor(1)
-    @v.bind_key("Shift-2")
+    @v.bind_key("s")
     def _sub_n2(viewer): subtract_neighbor(2)
-    @v.bind_key("Shift-3")
+    @v.bind_key("f")
     def _sub_n3(viewer): subtract_neighbor(3)
 
     # Save all
@@ -302,7 +304,7 @@ def main():
     print("\n=== INSTRUCTIONS ===")
     print("Left/Right: navigate  |  b: bg on/off  |  u/j: +/- neighbors")
     print("m: merge PAINT  |  x: subtract PAINT")
-    print("1/2/3: MERGE neighbor# → current   |   Shift+1/2/3: SUBTRACT neighbor#")
+    print("q/w/r: MERGE neighbor 1/2/3 → current   |   a/s/f: SUBTRACT neighbor 1/2/3")
     print("d: delete  |  k: keep next")
     print("Ctrl+R: reset paint  |  Ctrl+S: save all")
 

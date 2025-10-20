@@ -17,9 +17,9 @@ from scipy.ndimage import gaussian_filter1d
 from scipy.fft import rfft, rfftfreq
 
 # ========= CONFIG =========
-DATE  = "2025-08-18"
-MOUSE = "rAi162_15"
-RUN   = "run9"
+DATE  = "2025-08-06"
+MOUSE = "organoid"
+RUN   = "run8"
 
 BASE = Path("/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025/data") / DATE / MOUSE / RUN
 TRACE_PATH = BASE / "traces" / "dff_traces_curated_bgsub.csv"

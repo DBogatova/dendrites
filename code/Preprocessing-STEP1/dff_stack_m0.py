@@ -14,13 +14,13 @@ import tifffile
 import zarr
 
 # ======= CONFIG =======
-DATE  = "2025-10-03"
-MOUSE = "rAi162_15"
-RUN   = "run7"
+DATE  = "2025-08-06"
+MOUSE = "organoid"
+RUN   = "run4"
 
 BASE = Path("/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025/data") / DATE / MOUSE / RUN
-RAW_IN   = BASE / "raw" / f"runA_{RUN}_{MOUSE}_v1_reslice.tif"
-DFF_OUT  = BASE / "preprocessed" / f"runA_{RUN}_{MOUSE}_v1_reslice_dff_stack.tif"
+RAW_IN   = BASE / "raw" / f"runB_{RUN}_reslice.tif"
+DFF_OUT  = BASE / "preprocessed" / f"runB_{RUN}_reslice_dff_stack.tif"
 
 Q = 0.20          # quantile for F0
 EPS = 1e-6        # avoid divide by zero
@@ -57,12 +57,21 @@ def crop_y_bottom(arr: np.ndarray) -> np.ndarray:
 def read_time_chunk(tf: tifffile.TiffFile, t0: int, t1: int, Z: int) -> np.ndarray:
     """
     Read frames [t0, t1) as (k, Z, Yc, X) without loading the whole file.
-    Uses TiffFile.series[0].aszarr() which supports slicing on compressed TIFFs.
+    Uses TiffFile.series[0].asarray() with slicing for chunked reads.
     """
-    store = tf.series[0].aszarr()
-    z = zarr.open(store, mode="r")            # shape (T,Z,Y,X) or (Z,Y,X)
-    arr = z if z.ndim == 4 else z[None, ...]  # ensure time axis exists
-    chunk = np.asarray(arr[t0:t1])            # materialize just this time slice
+    try:
+        # Try the zarr approach first (for older zarr versions)
+        store = tf.series[0].aszarr()
+        z = zarr.open(store, mode="r")
+        arr = z if z.ndim == 4 else z[None, ...]
+        chunk = np.asarray(arr[t0:t1])
+    except (TypeError, AttributeError):
+        # Fallback for newer zarr versions - use direct slicing
+        full_arr = tf.series[0].asarray()
+        if full_arr.ndim == 3:
+            full_arr = full_arr[None, ...]  # add time dimension
+        chunk = full_arr[t0:t1]
+    
     return crop_y_bottom(chunk)
 
 # ---------- P² estimator (per voxel, vectorized) ----------

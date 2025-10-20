@@ -18,13 +18,13 @@ import csv, gc
 
 # ------------------- CONFIG -------------------
 
-DATE = "2025-10-03"
-MOUSE = "rAi162_15"
-RUN = "run7"
+DATE = "2025-08-06"
+MOUSE = "organoid"
+RUN = "run8"
 
 # Paths
 BASE = Path("/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025/data") / DATE / MOUSE / RUN
-RAW_STACK_PATH = BASE / "raw" / f"runA_{RUN}_{MOUSE}_v1_reslice.tif"
+RAW_STACK_PATH = BASE / "raw" / f"runB_{RUN}_reslice.tif"
 PREPROCESSED = BASE / "preprocessed"
 PREPROCESSED.mkdir(exist_ok=True)
 EVENT_CROPS = PREPROCESSED / "event_crops"; EVENT_CROPS.mkdir(exist_ok=True)
@@ -43,8 +43,8 @@ Y_CROP = 3
 GAUSS_SIGMA = (0.0, 0.8, 1.0, 1.0)  # (T,Z,Y,X)
 F0_PERCENTILE = 10
 TOP_FRAC = 0.01
-Z_HI = 1.5
-Z_LO = 0.5
+Z_HI = 2.0
+Z_LO = 1.0
 BASELINE_WINDOW = 600
 NOISE_WINDOW = 200
 MIN_EVENT_LEN = 3
