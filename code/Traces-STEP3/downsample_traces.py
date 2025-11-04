@@ -52,7 +52,7 @@ LINEWIDTH = 1.0
 COLORMAP = "turbo"
 
 # Selected traces for combo plot
-SELECTED_TRACES = ["dend_001","dend_003","dend_006","dend_008","dend_009","dend_010", "dend_015"]
+SELECTED_TRACES = ["dend_001","dend_003","dend_006","dend_008", "dend_012", "dend_014", "dend_015", "dend_016", "dend_019"]
 
 def main():
     print(f"Loading traces from: {INPUT_CSV}")
