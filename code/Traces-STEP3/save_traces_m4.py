@@ -35,7 +35,7 @@ mpl.rcParams['axes.unicode_minus'] = False
 # ===== CONFIG =====
 DATE = "2025-08-06"
 MOUSE = "organoid"
-RUN = "run8"
+RUN = "run4-crop"
 FRAME_RATE = 10  # Hz
 ARTIFACT_Z = -0.5  # replace ΔF/F < -0.5 with 0 (before smoothing)
 SMOOTH_SIGMA = 0.5  # for gaussian_filter1d
@@ -44,7 +44,9 @@ CHUNK_T = 118  # time frames per chunk for memory efficiency
 # ===== PATHS =====
 PROJECT_ROOT = Path("/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025")
 BASE = PROJECT_ROOT / "data" / DATE / MOUSE / RUN
-RAW_STACK_PATH = BASE / "raw" / f"runB_{RUN}_reslice.tif"
+RAW_CLEAN_PATH = BASE / "preprocessed" / "raw_clean.tif"
+RAW_ORIG_PATH = BASE / "raw" / f"runB_run4_reslice-crop.tif"
+RAW_STACK_PATH = RAW_CLEAN_PATH if RAW_CLEAN_PATH.exists() else RAW_ORIG_PATH
 MASK_FOLDER = BASE / "labelmaps_curated_dynamic"
 TRACE_FOLDER = BASE / "traces"; TRACE_FOLDER.mkdir(exist_ok=True)
 TRACE_PKL = TRACE_FOLDER / "dff_traces_curated_bgsub.pkl"
@@ -52,7 +54,7 @@ TRACE_CSV = TRACE_FOLDER / "dff_traces_curated_bgsub.csv"
 PREVIEW_FOLDER = BASE / "trace_previews_curated"; PREVIEW_FOLDER.mkdir(exist_ok=True)
 
 PLOT_ALL_TRACES = False
-SELECTED_NAMES = ["dend_003","dend_008","dend_010","dend_011","dend_029","dend_028", "dend_035", "dend_036", "dend_037", "dend_039"]
+SELECTED_NAMES = ["dend_001","dend_003","dend_006","dend_008","dend_009","dend_010", "dend_015"]
 
 
 # ================== ΔF/F Stack Reader ==================
@@ -142,7 +144,7 @@ def load_masks_and_indices(mask_folder, Z, Y, X):
 
 def main():
     # ===== Use raw stack directly =====
-    print(f"Using raw stack: {RAW_STACK_PATH}")
+    print(f"Using {'clean' if RAW_STACK_PATH == RAW_CLEAN_PATH else 'original'} raw stack: {RAW_STACK_PATH}")
     if not RAW_STACK_PATH.exists():
         print(f"ERROR: Raw stack not found: {RAW_STACK_PATH}")
         return
@@ -157,8 +159,11 @@ def main():
     print(f"Actual frames: {T} ({actual_duration:.1f}s at {FRAME_RATE}Hz)")
     
     if T < expected_frames:
-        print(f"WARNING: Raw stack is shorter than expected!")
-        print(f"This suggests the original raw data is incomplete.")
+        print(f"INFO: Raw stack is shorter than expected ({T} vs {expected_frames} frames)")
+        if RAW_STACK_PATH == RAW_CLEAN_PATH:
+            print(f"This is expected - motion frames were removed from the clean stack.")
+        else:
+            print(f"This suggests the original raw data is incomplete.")
 
     # ===== Load curated masks and indices =====
     print(f"Loading curated masks from: {MASK_FOLDER}")

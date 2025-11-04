@@ -28,7 +28,7 @@ from tqdm import tqdm
 # ================== CONFIG ==================
 DATE = "2025-08-06"
 MOUSE = "organoid"
-RUN = "run9"
+RUN = "run4-crop"
 
 BASE = Path("/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025/data") / DATE / MOUSE / RUN
 EVENT_FOLDER = BASE / "preprocessed" / "event_crops"
@@ -39,7 +39,7 @@ MANIFEST     = BASE / "masks_manifest.csv"
 for p in (OUT_LABELS, OUT_PREV, OUT_BGS): p.mkdir(parents=True, exist_ok=True)
 
 # ---- Parameters (faithful to the original; adjust if needed) ----
-VOXEL_SIZE = (9.4, 1.0, 1.2)       # (Z,Y,X) μm
+VOXEL_SIZE = (4.7, 1.0, 1.2)       # (Z,Y,X) μm
 VOXEL_VOL  = float(np.prod(VOXEL_SIZE))
 
 INTENSITY_PERCENTILE = 99.9        # global threshold for event
@@ -47,14 +47,14 @@ Y_CROP_BOTTOM = 0
 MAX_FRAME_GAP = 1
 MIN_EVENT_LENGTH = 3
 
-MIN_VOL = 15000.0                    # μm³
-MAX_VOL = 150000.0                 # μm³   (set to None to disable upper cap)
+MIN_VOL = 1500.0                    # μm³
+MAX_VOL = 15000.0                 # μm³   (set to None to disable upper cap)
 
 SLICE_OPEN_K  = 3                  # small open to tidy specks
 SLICE_CLOSE_K = 3                  # small close to fill pinholes
 SLICE_MIN_PIX = 20                 # 2D speck filter before 3D CC
 
-DUPLICATE_DICE = 0.80
+DUPLICATE_DICE = 0.50
 MAX_DENDRITES_TOTAL = 255
 
 # ================== HELPERS ==================

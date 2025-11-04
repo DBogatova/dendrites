@@ -27,9 +27,9 @@ import csv
 # ======= CONFIG =======
 DATE  = "2025-08-06"
 MOUSE = "organoid"
-RUN   = "run8"
+RUN   = "run4-crop"
 
-VOXEL_SIZE = (9.4, 1.0, 1.2)  # (Z,Y,X) μm
+VOXEL_SIZE = (4.7, 1.0, 1.2)  # (Z,Y,X) μm
 NEIGHBOR_K_DEFAULT = 3
 NEIGHBOR_K_MAX = 6
 
