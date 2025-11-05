@@ -17,13 +17,13 @@ from pathlib import Path
 from scipy.ndimage import gaussian_filter1d
 
 # ===== Matplotlib config =====
-mpl.rcParams['font.family'] = 'CMU Serif'
+mpl.rcParams['font.family'] = 'Arial'
 mpl.rcParams['axes.unicode_minus'] = False
 
 # ===== CONFIG =====
-DATE = "2025-08-06"
-MOUSE = "organoid"
-RUN = "run4-crop"
+DATE = "2025-10-29"
+MOUSE = "rAi162_15"
+RUN = "run1-crop"
 
 # Processing options
 DECIMATE = False      # Take every 5th point (10Hz -> 2Hz)
@@ -52,7 +52,8 @@ LINEWIDTH = 1.0
 COLORMAP = "turbo"
 
 # Selected traces for combo plot
-SELECTED_TRACES = ["dend_001","dend_003","dend_006","dend_008", "dend_012", "dend_014", "dend_015", "dend_016", "dend_019"]
+SELECTED_TRACES = ["dend_001","dend_003","dend_008", "dend_012", "dend_014", "dend_015", "dend_016", "dend_019"]
+USE_ALL = True # Set to True to use all available traces
 
 def main():
     print(f"Loading traces from: {INPUT_CSV}")
@@ -62,8 +63,8 @@ def main():
     processed_df = df.copy()
     
     if SMOOTH:
-        print("Applying 5-point rolling mean smoothing...")
-        processed_df = processed_df.rolling(window=5, center=True).mean()
+        print("Applying 2-point rolling mean smoothing...")
+        processed_df = processed_df.rolling(window=2, center=True).mean()
     
     if DECIMATE:
         print("Decimating: taking every 2nd point...")
@@ -97,12 +98,19 @@ def main():
         ax.grid(True, alpha=0.3)
         
         pdf_path = PREVIEW_FOLDER / f"{col}_trace{suffix}.pdf"
+        svg_path = PREVIEW_FOLDER / f"{col}_trace{suffix}.svg"
         fig.savefig(pdf_path, format='pdf', bbox_inches='tight')
+        fig.savefig(svg_path, format='svg', bbox_inches='tight')
         plt.close(fig)
     
     # Generate combo plot with selected traces
     print("Generating combo plot...")
-    selected_cols = [col for col in SELECTED_TRACES if col in processed_df.columns]
+    if USE_ALL:
+        selected_cols = list(processed_df.columns)
+        print(f"Using all {len(selected_cols)} available traces")
+    else:
+        selected_cols = [col for col in SELECTED_TRACES if col in processed_df.columns]
+        print(f"Using {len(selected_cols)} selected traces")
     N = len(selected_cols)
     
     fig, ax = plt.subplots(figsize=(12, max(6, N * 0.5)))
@@ -144,7 +152,9 @@ def main():
     ax.grid(True, alpha=0.3)
     
     fig.tight_layout()
+    combo_svg = PREVIEW_FOLDER / f"combo_traces{suffix}.svg"
     fig.savefig(COMBO_PDF, format='pdf', bbox_inches='tight')
+    fig.savefig(combo_svg, format='svg', bbox_inches='tight')
     plt.close(fig)
     
     print(f"✅ Individual previews saved to: {PREVIEW_FOLDER}")

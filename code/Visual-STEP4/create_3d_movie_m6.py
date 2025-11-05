@@ -7,28 +7,30 @@ import imageio
 import time
 
 # === CONFIGURATION ===
-DATE = "2025-08-18"
-MOUSE = "rAi162_15"
-RUN = "run9"
+DATE = "2025-08-06"
+MOUSE = "organoid"
+RUN = "run4-crop"
 Y_CROP = 3
-VOXEL_SCALE = (9.4, 1.0, 1.2)  # (Z, Y, X) in microns
+VOXEL_SCALE = (4.7, 1.0, 1.2)  # (Z, Y, X) in microns
 
 # Specify which cells to include
 SELECTED_CELLS = [
-    "dend_006", "dend_014", "dend_019", "dend_035",
-    "dend_023", "dend_025", "dend_027"
+    "dend_001","dend_003","dend_008", "dend_012", 
+    "dend_014", "dend_015", "dend_016", "dend_019"
 ]
 
 # === PATHS ===
 BASE = Path("/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025/data") / DATE / MOUSE / RUN
 MASK_FOLDER = BASE / "labelmaps_curated_dynamic"
-RAW_STACK_PATH = BASE / "raw" / f"runA_{RUN}_{MOUSE}_reslice_bin.tif"
+RAW_CLEAN_PATH = BASE / "preprocessed" / "raw_clean.tif"
+RAW_ORIG_PATH = BASE / "raw" / f"runA_{RUN}_{MOUSE}_reslice_bin.tif"
+RAW_STACK_PATH = RAW_CLEAN_PATH if RAW_CLEAN_PATH.exists() else RAW_ORIG_PATH
 OUTPUT_PATH =  BASE / "overlays" / "selected_cells_dff.tif"
 VIDEO_PATH = BASE / "overlays" / "selected_cells_rotation.mp4"
 OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 # === LOAD RAW DATA ===
-print(f"Loading raw stack from: {RAW_STACK_PATH}")
+print(f"Loading {'clean' if RAW_STACK_PATH == RAW_CLEAN_PATH else 'original'} raw stack from: {RAW_STACK_PATH}")
 raw_stack = tifffile.imread(RAW_STACK_PATH).astype(np.float32)
 if Y_CROP > 0:
     raw_stack = raw_stack[:, :, :-Y_CROP, :]

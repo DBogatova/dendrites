@@ -5,28 +5,31 @@ from tqdm import tqdm
 import gc
 
 # === CONFIGURATION ===
-DATE = "2025-08-18"
-MOUSE = "rAi162_15"
-RUN = "run9"
+DATE = "2025-08-06"
+MOUSE = "organoid"
+RUN = "run4-crop"
 Y_CROP = 3
 FRAME_RATE = 10  # Hz
 CHUNK_DURATION = 60  # seconds per chunk
 
 # Cell selection options
-USE_ALL_CELLS = True  # Set to False to use only SELECTED_CELLS
+USE_ALL_CELLS = False  # Set to False to use only SELECTED_CELLS
 SELECTED_CELLS = [
-    "dend_006", "dend_014", "dend_019", "dend_035",
-    "dend_023", "dend_025", "dend_027"
+    "dend_001","dend_003","dend_008", "dend_012", 
+    "dend_014", "dend_015", "dend_016", "dend_019"
 ]
+
 
 # === PATHS ===
 BASE = Path("/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025/data") / DATE / MOUSE / RUN
 MASK_FOLDER = BASE / "labelmaps_curated_dynamic"
-RAW_STACK_PATH = BASE / "raw" / f"runA_{RUN}_{MOUSE}_green_reslice.tif"
+RAW_CLEAN_PATH = BASE / "preprocessed" / "raw_clean.tif"
+RAW_ORIG_PATH = BASE / "raw" / f"runA_{RUN}_{MOUSE}_green_reslice.tif"
+RAW_STACK_PATH = RAW_CLEAN_PATH if RAW_CLEAN_PATH.exists() else RAW_ORIG_PATH
 
 def main():
     # === LOAD RAW DATA ===
-    print(f"Loading raw stack from: {RAW_STACK_PATH}")
+    print(f"Loading {'clean' if RAW_STACK_PATH == RAW_CLEAN_PATH else 'original'} raw stack from: {RAW_STACK_PATH}")
     raw_stack = tifffile.imread(RAW_STACK_PATH).astype(np.float32)
     if Y_CROP > 0:
         raw_stack = raw_stack[:, :, :-Y_CROP, :]
@@ -47,7 +50,7 @@ def main():
         mask_paths = sorted(MASK_FOLDER.glob("dend_*.tif"))
         print(f"Processing all {len(mask_paths)} cells")
     else:
-        mask_paths = [MASK_FOLDER / f"{cell_name}.tif" for cell_name in SELECTED_CELLS]
+        mask_paths = [MASK_FOLDER / f"{cell_name}_labelmap.tif" for cell_name in SELECTED_CELLS]
         print(f"Processing {len(SELECTED_CELLS)} selected cells")
 
     # Load all masks once

@@ -16,6 +16,7 @@ RUN = "run4-crop"
 SELECTED_NAMES = [
     "dend_001","dend_003","dend_005","dend_006","dend_008","dend_011","dend_012", "dend_013", "dend_014", "dend_015", "dend_016", "dend_019"
     ]
+USE_ALL = True  # Set to True to use all available masks
 
 # Paths
 PROJECT_ROOT = Path("/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025")
@@ -25,14 +26,24 @@ MASK_FOLDER = BASE / "labelmaps_curated_dynamic"
 def main():
     print("Checking mask overlaps...")
     
-    # Load selected masks
+    # Load masks
     masks = {}
-    for name in SELECTED_NAMES:
-        mask_path = MASK_FOLDER / f"{name}_labelmap.tif"
-        if mask_path.exists():
+    if USE_ALL:
+        # Use all available masks
+        mask_files = sorted(MASK_FOLDER.glob("dend_*_labelmap.tif"))
+        for mask_path in mask_files:
+            name = mask_path.stem.replace("_labelmap", "")
             masks[name] = tifffile.imread(mask_path).astype(bool)
-        else:
-            print(f"Warning: {name} not found")
+        print(f"Using all {len(masks)} available masks")
+    else:
+        # Use selected masks
+        for name in SELECTED_NAMES:
+            mask_path = MASK_FOLDER / f"{name}_labelmap.tif"
+            if mask_path.exists():
+                masks[name] = tifffile.imread(mask_path).astype(bool)
+            else:
+                print(f"Warning: {name} not found")
+        print(f"Using {len(masks)} selected masks")
     
     if len(masks) < 2:
         print("Need at least 2 masks to check overlap")

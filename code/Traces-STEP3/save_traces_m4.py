@@ -33,9 +33,9 @@ mpl.rcParams['font.family'] = 'CMU Serif'
 mpl.rcParams['axes.unicode_minus'] = False
 
 # ===== CONFIG =====
-DATE = "2025-08-06"
-MOUSE = "organoid"
-RUN = "run4-crop"
+DATE = "2025-10-29"
+MOUSE = "rAi162_15"
+RUN = "run1-crop"
 FRAME_RATE = 10  # Hz
 ARTIFACT_Z = -0.5  # replace ΔF/F < -0.5 with 0 (before smoothing)
 SMOOTH_SIGMA = 0.5  # for gaussian_filter1d
@@ -53,8 +53,8 @@ TRACE_PKL = TRACE_FOLDER / "dff_traces_curated_bgsub.pkl"
 TRACE_CSV = TRACE_FOLDER / "dff_traces_curated_bgsub.csv"
 PREVIEW_FOLDER = BASE / "trace_previews_curated"; PREVIEW_FOLDER.mkdir(exist_ok=True)
 
-PLOT_ALL_TRACES = False
-SELECTED_NAMES = ["dend_001","dend_003","dend_006","dend_008", "dend_012", "dend_014", "dend_015", "dend_016", "dend_019"]
+PLOT_ALL_TRACES = True
+SELECTED_NAMES = ["dend_001","dend_003","dend_008", "dend_012", "dend_014", "dend_015", "dend_016", "dend_019"]
 
 
 # ================== ΔF/F Stack Reader ==================

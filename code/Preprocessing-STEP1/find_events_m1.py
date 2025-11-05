@@ -21,13 +21,13 @@ import csv, gc
 
 # ------------------- CONFIG -------------------
 
-DATE = "2025-08-06"
-MOUSE = "organoid"
-RUN = "run4-crop"
+DATE = "2025-10-29"
+MOUSE = "rAi162_15"
+RUN = "run1-crop"
 
 # Paths
 BASE = Path("/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025/data") / DATE / MOUSE / RUN
-RAW_ORIG_PATH = BASE / "raw" / f"runB_run4_reslice-crop.tif"
+RAW_ORIG_PATH = BASE / "raw" / f"runB_run1_rAi162_15_v1_reslice-crop.tif"
 RAW_CLEAN_PATH = BASE / "preprocessed" / "raw_clean.tif"
 RAW_STACK_PATH = RAW_CLEAN_PATH if RAW_CLEAN_PATH.exists() else RAW_ORIG_PATH
 
@@ -131,7 +131,11 @@ def main():
     print(f"Using {'clean' if RAW_STACK_PATH == RAW_CLEAN_PATH else 'original'} RAW: {RAW_STACK_PATH}")
     with tifffile.TiffFile(RAW_STACK_PATH) as tif:
         n_pages = len(tif.pages)
-        Z = 28  # 🔧 set this to your known number of z-planes
+        # Get actual Z dimension from TIFF structure
+        if hasattr(tif.series[0], 'shape') and len(tif.series[0].shape) == 4:
+            _, Z, _, _ = tif.series[0].shape
+        else:
+            Z = 28  # fallback
         T = n_pages // Z
         Y, X = tif.pages[0].asarray().shape
         print(f"Detected {n_pages} pages → T={T}, Z={Z}, Y={Y}, X={X}")
@@ -151,7 +155,9 @@ def main():
         
         with tifffile.TiffFile(RAW_STACK_PATH) as tif:
             n_pages = len(tif.pages)
-            assert n_pages == T * Z, f"Page count mismatch: {n_pages} vs {T*Z}"
+            if n_pages != T * Z:
+                print(f"Warning: Page count mismatch: {n_pages} vs {T*Z}. Using available pages.")
+                T = min(T, n_pages // Z)  # Adjust T to available pages
             for i in sample_indices:
                 z_start = i * Z
                 z_end   = z_start + Z
