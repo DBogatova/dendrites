@@ -143,9 +143,15 @@ def main():
             
             corr = calculate_temporal_correlation(trace1, trace2)
             
+            # Debug specific pair
+            if (name1 == "dend_025" and name2 == "dend_027") or (name1 == "dend_027" and name2 == "dend_025"):
+                print(f"  DEBUG {name1} ↔ {name2}: spatial={overlap:.3f}, temporal={corr:.3f} (threshold={TEMPORAL_CORR_THRESHOLD})")
+            
             if corr > TEMPORAL_CORR_THRESHOLD:
                 valid_pairs.append((name1, name2))
                 print(f"  {name1} ↔ {name2}: spatial={overlap:.3f}, temporal={corr:.3f}")
+            elif overlap > 0.01:  # Show failed pairs with some overlap
+                print(f"  FAILED {name1} ↔ {name2}: spatial={overlap:.3f}, temporal={corr:.3f}")
     
     print(f"Found {len(valid_pairs)} valid branch pairs")
     
@@ -177,6 +183,115 @@ def main():
     summary_df = pd.DataFrame(results)
     summary_path = OUTPUT_FOLDER / "dendrite_summary.csv"
     summary_df.to_csv(summary_path, index=False)
+    
+    # Create merged dendrite outputs
+    if len(dendrites) > 0:
+        print("Creating merged dendrite outputs...")
+        
+        for i, dendrite_masks in enumerate(dendrites):
+            dendrite_name = f"dendrite_{i:03d}"
+            
+            # Create merged mask
+            merged_mask = create_merged_mask(masks, dendrite_masks)
+            
+            # Save merged mask
+            mask_path = OUTPUT_FOLDER / f"{dendrite_name}_merged_labelmap.tif"
+            tifffile.imwrite(mask_path, merged_mask.astype(np.uint16))
+            
+            # Create preview with MIP + trace (like trace_curated_preview)
+            import matplotlib.pyplot as plt
+            import matplotlib.cm as cm
+            from skimage.measure import find_contours
+            
+            # Get merged trace data
+            merged_trace = None
+            if TRACE_FILE.exists():
+                traces_df = pd.read_csv(TRACE_FILE, index_col=0)
+                branch_traces = []
+                
+                for branch_name in dendrite_masks:
+                    if branch_name in traces_df.columns:
+                        branch_traces.append(traces_df[branch_name].values)
+                
+                if branch_traces:
+                    # Volume-weighted average
+                    weights = [np.sum(masks[name]) for name in dendrite_masks if name in masks]
+                    if len(weights) == len(branch_traces):
+                        weights = np.array(weights) / np.sum(weights)
+                        merged_trace = np.average(branch_traces, axis=0, weights=weights)
+                    else:
+                        merged_trace = np.mean(branch_traces, axis=0)
+            
+            # Create figure with MIP + trace (2:1 ratio for traces)
+            if merged_trace is not None:
+                fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4), gridspec_kw={'width_ratios': [1, 2]})
+            else:
+                fig, ax1 = plt.subplots(1, 1, figsize=(5, 4))
+                ax2 = None
+            
+            # MIP with colored branches
+            mip_mask = np.max(merged_mask, axis=0).astype(bool)
+            ax1.imshow(np.zeros_like(mip_mask), cmap="gray")
+            
+            # Nicer color palette
+            if len(dendrite_masks) <= 6:
+                colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD'][:len(dendrite_masks)]
+            else:
+                colors = cm.Set3(np.linspace(0, 1, len(dendrite_masks)))
+            for j, branch_name in enumerate(dendrite_masks):
+                if branch_name in masks:
+                    branch_mip = np.max(masks[branch_name], axis=0)
+                    contours = find_contours(branch_mip.astype(np.uint8), 0.5)
+                    for contour in contours:
+                        ax1.plot(contour[:, 1], contour[:, 0], color=colors[j], linewidth=2)
+            
+            ax1.set_title(f"{dendrite_name} MIP")
+            ax1.axis("off")
+            
+            # Individual branch traces with matching colors
+            if ax2 is not None:
+                if TRACE_FILE.exists():
+                    traces_df = pd.read_csv(TRACE_FILE, index_col=0)
+                    time_axis = np.arange(len(traces_df)) / 10.0  # Assuming 10Hz
+                    
+                    for j, branch_name in enumerate(dendrite_masks):
+                        if branch_name in traces_df.columns:
+                            trace = traces_df[branch_name].values
+                            ax2.plot(time_axis, trace, color=colors[j], linewidth=1.5, label=branch_name, alpha=0.8)
+                    
+                    ax2.set_xlabel('Time (s)')
+                    ax2.set_ylabel('ΔF/F (%)')
+                    ax2.set_title(f"{dendrite_name} Branch Traces")
+                    ax2.grid(True, alpha=0.3)
+                    ax2.legend(fontsize=8)
+            
+            fig.tight_layout()
+            preview_path = OUTPUT_FOLDER / f"{dendrite_name}_preview.png"
+            fig.savefig(preview_path, dpi=150, bbox_inches="tight")
+            plt.close(fig)
+            
+            # Create merged trace if traces available
+            if TRACE_FILE.exists():
+                traces_df = pd.read_csv(TRACE_FILE, index_col=0)
+                branch_traces = []
+                
+                for branch_name in dendrite_masks:
+                    if branch_name in traces_df.columns:
+                        branch_traces.append(traces_df[branch_name].values)
+                
+                if branch_traces:
+                    # Average traces weighted by mask volume
+                    weights = [np.sum(masks[name]) for name in dendrite_masks if name in masks]
+                    if len(weights) == len(branch_traces):
+                        weights = np.array(weights) / np.sum(weights)
+                        merged_trace = np.average(branch_traces, axis=0, weights=weights)
+                    else:
+                        merged_trace = np.mean(branch_traces, axis=0)
+                    
+                    # Save merged trace
+                    trace_df = pd.DataFrame({dendrite_name: merged_trace}, index=traces_df.index)
+                    trace_path = OUTPUT_FOLDER / f"{dendrite_name}_trace.csv"
+                    trace_df.to_csv(trace_path)
     
     print(f"✅ Results saved to: {OUTPUT_FOLDER}")
     print(f"✅ Summary: {summary_path}")

@@ -5,15 +5,15 @@ from tqdm import tqdm
 import gc
 
 # === CONFIGURATION ===
-DATE = "2025-08-06"
-MOUSE = "organoid"
-RUN = "run4-crop"
+DATE = "2025-10-29"
+MOUSE = "rAi162_15"
+RUN = "run1-crop"
 Y_CROP = 3
 FRAME_RATE = 10  # Hz
 CHUNK_DURATION = 60  # seconds per chunk
 
 # Cell selection options
-USE_ALL_CELLS = False  # Set to False to use only SELECTED_CELLS
+USE_ALL_CELLS = True  # Set to False to use only SELECTED_CELLS
 SELECTED_CELLS = [
     "dend_001","dend_003","dend_008", "dend_012", 
     "dend_014", "dend_015", "dend_016", "dend_019"
@@ -24,7 +24,7 @@ SELECTED_CELLS = [
 BASE = Path("/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025/data") / DATE / MOUSE / RUN
 MASK_FOLDER = BASE / "labelmaps_curated_dynamic"
 RAW_CLEAN_PATH = BASE / "preprocessed" / "raw_clean.tif"
-RAW_ORIG_PATH = BASE / "raw" / f"runA_{RUN}_{MOUSE}_green_reslice.tif"
+RAW_ORIG_PATH = BASE / "raw" / f"runA_run1_{MOUSE}_v1_reslice_crop.tif"
 RAW_STACK_PATH = RAW_CLEAN_PATH if RAW_CLEAN_PATH.exists() else RAW_ORIG_PATH
 
 def main():
